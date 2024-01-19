@@ -152,24 +152,6 @@ class ThreeLayerOceanModel:
     Radiative forcing is read in from CMIP6 data.
     Temperature and carbon cycle response can be
     chosen from different options."""
-    
-    #### Model parameters
-    alpha = 1.16 # W m^-2 K^-1
-    w_E = 1.0e-6 # m s^-1
-    w_D = 0.4e-6 # m s^-1
-    C_ML = 2.0e8 # W s m^-2 K^-1 
-    Depths = np.array([50, 
-                   500, 
-                   3150]) # m
-    R4co2 = 7.4  # W m^-2
-    beta = 1.33  # dmnl
-    
-    epsilon = 0.47 # ppmv GtC^-1
-    delta   = 0.0215 # yr^-1
-    B       = 0.15 * delta * epsilon
-    
-    pi_co2  = 283.0
-    
     def __init__(self, co2_emissions, ERF_nonco2, ccycle_type='default', sy=1850, ey=2300, dt=1.0, dbg=False):
         
         self.dbg = dbg
@@ -181,7 +163,24 @@ class ThreeLayerOceanModel:
         self.dt = dt
         self.dts = self.dt * 365.25 * 24 * 3600.
         self.nyears = int((self.endyear - self.startyear) / self.dt) + 1
+        self.time = np.linspace(self.startyear, self.endyear, self.nyears)
         
+        
+        #### Model parameters
+        self.alpha = 1.16 # W m^-2 K^-1
+        self.w_E = 1.0e-6 # m s^-1
+        self.w_D = 0.4e-6 # m s^-1
+        self.C_ML = 2.0e8 # W s m^-2 K^-1 
+        self.R4co2 = 7.4  # W m^-2
+        self.beta = 1.33  # dmnl
+    
+        self.epsilon = 0.47 # ppmv GtC^-1
+        self.delta   = 0.0215 # yr^-1
+        self.B       = 0.15 * self.delta * self.epsilon
+        
+        self.pi_co2  = 283.0
+
+        ### initialize values        
         self.T_ML = np.zeros((self.nyears))  # Temperature anomaly in mixed layer
         self.T_TC = np.zeros((self.nyears))  # Temperature anomaly in thermocline
         self.T_D  = np.zeros((self.nyears))  # Temperature anomaly in deep ocean
@@ -201,9 +200,6 @@ class ThreeLayerOceanModel:
             self.FAIR_co2_containers = np.zeros((4,self.nyears))
             self.lifetimes = np.array([1.0e9, 394.4, 36.54, 4.304])
             self.partitioning = np.array([0.2173, 0.224, 0.2824, 0.2763])
-        elif self.ccycle_type == 'CarbonModel':
-            self.CarbonModel = CCycleModelLenton(co2_emissions, sy=self.startyear, ey=self.endyear, dt=self.dt, dbg=self.dbg)
- 
             
     def integrate(self):
         
@@ -219,16 +215,6 @@ class ThreeLayerOceanModel:
                 
                 self.__calcERF_FAIR(i)
                 self.__updateCO2_FAIR(i)
-                
-            elif self.ccycle_type == 'CarbonModel':
-
-                sys.exit('Carbon box model not available yet!')
-                
-                self.__calcERF_FAIR(i)
-                self.CarbonModel.step_forward(i, self.T_surf[i], self.T_ML[i])
-                self.co2[i+1] = self.CarbonModel.pCO2_atm[i+1]
-                
-                
                 
             else:
                 sys.exit('Wrong ccycle type given!')
@@ -308,21 +294,21 @@ class ThreeLayerOceanModel:
                                                    (self.w_E/self.Depths[0]) * (self.T_ML[i] - self.T_TC[i]))
         
         self.T_TC[i+1] = self.T_TC[i] + self.dts * ((self.w_E/self.Depths[1]) * (self.T_ML[i] - self.T_TC[i]) - \
-                                                   (self.w_D/self.Depths[1]) * (self.T_TC[i] - self.T_D[i]))
+                                                    (self.w_D/self.Depths[1]) * (self.T_TC[i] - self.T_D[i]))
         
         self.T_D[i+1] = self.T_D[i] + self.dts * ((self.w_D/self.Depths[2]) * (self.T_TC[i] - self.T_D[i]))
                 
         self.T_surf[i+1] = self.beta * self.T_ML[i+1]
     
     
-    def getCO2(self): return self.co2
-    def getTsurf(self): return self.T_surf
-    def getTml(self): return self.T_ML
-    def getTtc(self): return self.T_TC
-    def getTd(self): return self.T_D
-    def getERF(self): return self.ERF
-    def getERFCO2(self): return self.ERF_co2
+    def getCO2(self):       return self.co2
+    def getTsurf(self):     return self.T_surf
+    def getTml(self):       return self.T_ML
+    def getTtc(self):       return self.T_TC
+    def getTd(self):        return self.T_D
+    def getERF(self):       return self.ERF
+    def getERFCO2(self):    return self.ERF_co2
     def getERFnonCO2(self): return self.ERF_nonco2
-    def getCumEmis(self): return self.F
-    def getEmis(self): return self.emission
-
+    def getCumEmis(self):   return self.F
+    def getEmis(self):      return self.emission
+    def getTime(self):      return self.time
