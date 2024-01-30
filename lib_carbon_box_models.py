@@ -1042,8 +1042,8 @@ class EnergyAndCarbonBoxModel:
             ### assumes a list of tracer concentrations is given in order:
             ## C_warm, C_cold, C_int, C_deep
             
+            k_T = self.k_conveyor
             if self.include_Tdep_advection: k_T  += self.advection_Tdep_frac * self.k_conveyor * Ts
-            else: k_T = self.k_conveyor
 
             k_wi = self.k_mix_warm_int
             k_cd = self.k_mix_cold_deep
