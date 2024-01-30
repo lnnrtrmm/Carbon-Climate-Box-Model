@@ -332,10 +332,11 @@ class EnergyAndCarbonBoxModel:
     
     To-Dos:
         - make ocean energy and carbon transport consistent
+        - replace pCO2 calculation with simplified versions, if it is good enough
 
     """
 
-    def __init__(self, co2_emissions, ERF_nonco2, sy=1850, ey=2300, dt=1.0, dbg=False,
+    def __init__(self, co2_emissions, ERF_nonco2, sy=1850, ey=2300, dt=1.0, dbg=0,
                   lfix_co2=False, co2fix=283.0, depths=[50,500,3150], advection='LOSCAR',
                   initial_C_reservoirs=[596.0, 550.0, 1500.0, 730.0, 140.0, 10040.0, 26830.0]):
         
@@ -402,16 +403,19 @@ class EnergyAndCarbonBoxModel:
 
         
         # change tuning parameters to be as in the Carbon Model        
-        self.SpinupModel.C_veg_steady        = self.CarbonModel.C_veg_steady
-        self.SpinupModel.k_turn              = self.CarbonModel.k_turn
-        self.SpinupModel.K_halfsat           = self.CarbonModel.K_halfsat
-        self.SpinupModel.k_conveyor          = self.CarbonModel.k_conveyor
-        self.SpinupModel.k_mix_cold_deep     = self.CarbonModel.k_mix_cold_deep
-        self.SpinupModel.k_mix_warm_int      = self.CarbonModel.k_mix_warm_int
-        self.SpinupModel.k_int_deep_exchange = self.CarbonModel.k_int_deep_exchange
-        self.SpinupModel.k_warm_int_exchange = self.CarbonModel.k_warm_int_exchange
-        self.SpinupModel.k_hl_over           = self.CarbonModel.k_hl_over
-        self.SpinupModel.k_THC_over          = self.CarbonModel.k_THC_over
+        self.SpinupModel.C_veg_steady        = self.CarbonModel.C_veg_steady          # 2-box land component from Lenton (2000)
+        self.SpinupModel.k_turn              = self.CarbonModel.k_turn                # 2-box land component from Lenton (2000)
+        self.SpinupModel.K_halfsat           = self.CarbonModel.K_halfsat             # 2-box land component from Lenton (2000)
+
+        self.SpinupModel.k_conveyor          = self.CarbonModel.k_conveyor            # Advection as in LOSCAR (Zeebe, 2012)
+        self.SpinupModel.k_mix_cold_deep     = self.CarbonModel.k_mix_cold_deep       # Advection as in LOSCAR (Zeebe, 2012)
+        self.SpinupModel.k_mix_warm_int      = self.CarbonModel.k_mix_warm_int        # Advection as in LOSCAR (Zeebe, 2012)
+
+        self.SpinupModel.k_int_deep_exchange = self.CarbonModel.k_int_deep_exchange   # Advection as in Lenton (2000)
+        self.SpinupModel.k_warm_int_exchange = self.CarbonModel.k_warm_int_exchange   # Advection as in Lenton (2000)
+        self.SpinupModel.k_hl_over           = self.CarbonModel.k_hl_over             # Advection as in Lenton (2000)
+        self.SpinupModel.k_THC_over          = self.CarbonModel.k_THC_over            # Advection as in Lenton (2000)
+
         self.SpinupModel.k_gasex             = self.CarbonModel.k_gasex
         self.SpinupModel.include_bio_pump    = self.CarbonModel.include_bio_pump
         self.SpinupModel.bio_pump_warm       = self.CarbonModel.bio_pump_warm
@@ -454,7 +458,7 @@ class EnergyAndCarbonBoxModel:
 
 
     def __calcERF_FAIR(self, i):
-        """ This calculates the effective radiative forcing as in Fair."""
+        """ This calculates the effective radiative forcing as in FAIR."""
         f1_co2 = 4.57
         f3_co2 = 0.086
         scale_co2 = 1.0202
@@ -470,7 +474,7 @@ class EnergyAndCarbonBoxModel:
 
         """Energy exchange within the ocean.
         This is not consistent with the carbon transport within the ocean!!!
-        Specifically, this only box fpr the surface ocean instead of one for the high latitudes
+        Specifically, there is only one box for the surface ocean instead of one for the high latitudes
         and one for the low latitudes."""
         
         self.T_ML[i+1] = self.T_ML[i] + self.dts * ((self.ERF[i] - self.alpha*self.T_surf[i]) / self.C_ML - \
@@ -597,17 +601,6 @@ class EnergyAndCarbonBoxModel:
         talk_warm_Tdep  = -0.00230 # mol m^-3 K^-1
         talk_cold_Tdep  = -0.01233 # mol m^-3 K^-1
     
-        
-        k_photo = 0.184 # yr^-1
-        k_resp = 0.092 # yr^-1
-        k_sresp = 0.0337 # yr^-1
-    
-        k_c = 29 # ppmv
-        E_a = 54830.0 # J mol^-1
-        k_mm = 1.478
-        k_A = 8.7039e9
-        k_B = 157.072
-    
         # Tuning parameters have default values from Lenton (2000)
         def __init__(self, co2_emissions, sy=1850, ey=2300, dt=1.0, dbg=0, lfix_co2=False, co2fix=283.0,
                      initial_C_reservoirs = [596.0, 550.0, 1500.0, 730.0, 140.0, 10040.0, 26830.0],
@@ -642,6 +635,15 @@ class EnergyAndCarbonBoxModel:
             self.C_veg_steady        = 550.0 # steady state reservoir size in GtC (Lenton default: 550)
             self.K_halfsat           = 120.0 # ppmv (Lenton default: 120 (145) ppmv)
             self.k_turn              = 0.092 # yr^-1 (Lenton default: 0.092)
+            # rarely tuned:
+            self.k_photo             = 0.184 # yr^-1
+            self.k_resp              = 0.092 # yr^-1
+            self. k_sresp            = 0.0337 # yr^-1
+            self.k_c                 = 29 # ppmv
+            self.E_a                 = 54830.0 # J mol^-1
+            self.k_mm                = 1.478
+            self.k_A                 = 8.7039e9
+            self.k_B                 = 157.072
                     
             ###  Ocean
             ## advection rates for Lenton advection
@@ -811,6 +813,27 @@ class EnergyAndCarbonBoxModel:
             
             if not self.co2_is_fixed:
                 self.C_atm[i+1] = self.C_atm[i+1] + self.dt * self.emission[i]
+
+            
+
+            if self.dbg == 2 and not self.prescribe_C_flux_land:
+                print()
+                print()
+                print('   dbg ',i,', old C in vegetation: ',  self.C_veg[i])
+                print('   dbg ',i,', old C in soil      : ',  self.C_soil[i])
+                print('   dbg ',i,', old C in atmosphere: ',  self.C_atm[i])
+                print()
+                print('   dbg ',i,', photosynthesis: ', - self.photosynthesis[i])
+                print('   dbg ',i,', respiration: ', self.respiration[i])
+                print('   dbg ',i,', soil_respiration: ', self.soil_respiration[i])
+                print('   dbg ',i,', total land flux: ',  self.land_flux_total[i])
+                print()
+                print('   dbg ',i,', new C in vegetation: ',  self.C_veg[i+1])
+                print('   dbg ',i,', new C in soil      : ',  self.C_soil[i+1])
+                print('   dbg ',i,', new C in atmosphere: ',  self.C_atm[i+1])
+
+
+            self.__calc_pCO2_atm(i+1)
         
             ######################################################
             ############ Ocean component #########################
@@ -820,6 +843,12 @@ class EnergyAndCarbonBoxModel:
             if self.prescribe_C_flux_ocean:
                 self.ocean_flux_total[i] = self.prescribed_C_flux_ocean[i]
                 self.C_atm[i+1] = self.C_atm[i+1] - self.dt * self.ocean_flux_total[i]
+
+                if self.dbg == 2:
+                    print()
+                    print()
+                    print('   dbg ',i,', total ocean flux: ',  self.ocean_flux_total[i])
+                    print('   dbg ',i,', new C in atmosphere: ',  self.C_atm[i+1])
                 return
             
         
@@ -861,7 +890,7 @@ class EnergyAndCarbonBoxModel:
                                                                                 self.C_int_wat[i]   / self.V_int,
                                                                                 self.C_deep_oce[i]  / self.V_deep)
             else:
-                sys.exit('No correct choice of advection model! Can be "Lenton" or "LOSCAR", current value: '+advection)
+                sys.exit('No correct choice of advection model! Can be "Lenton" or "LOSCAR", current value: '+self.advection)
         
 
             ## Final update of the tracer concentrations
@@ -886,19 +915,13 @@ class EnergyAndCarbonBoxModel:
             if self.dbg == 2:
                 print()
                 print()
-                print('   dbg ',i,', atm C inv. before fluxes:', self.C_atm[i])
-                print('   dbg ',i,', photosynthesis: ', - self.photosynthesis[i])
-                print('   dbg ',i,', respiration: ', self.respiration[i])
-                print('   dbg ',i,', soil_respiration: ', self.soil_respiration[i])
-                print()
                 print('   dbg ',i,', atm pCO2         : ', self.pCO2_atm[i])
                 print('   dbg ',i,', ocean pCO2 (cold): ', self.pCO2_oce_cold[i])
                 print('   dbg ',i,', ocean pCO2 (warm): ', self.pCO2_oce_warm[i])
                 print('   dbg ',i,', ocean flux (cold): ', self.ocean_flux_cold[i])
                 print('   dbg ',i,', ocean flux (warm): ', self.ocean_flux_warm[i])
                 print()
-                print('   dbg ',i,', total land flux: ', self.respiration[i] + self.soil_respiration[i] - self.photosynthesis[i])
-                print('   dbg ',i,', total ocean flux: ', self.ocean_flux_warm[i] + self.ocean_flux_cold[i])
+                print('   dbg ',i,', total ocean flux: ', self.ocean_flux_total[i])
                 print('   dbg ',i,', atm C inv. after fluxes:', self.C_atm[i+1])
 
         
