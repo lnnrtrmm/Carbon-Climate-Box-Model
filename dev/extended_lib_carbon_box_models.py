@@ -336,7 +336,7 @@ class EnergyAndCarbonBoxModel:
 
     """
 
-    def __init__(self, co2_emissions, ERF_nonco2, sy=1850, ey=2300, dt=1.0, dbg=0,
+    def __init__(self, co2_emissions, ERF_nonco2, sy=1850, ey=2300, dt=1.0, dbg=0, pCO2calc='HAMOCC',
                   lfix_co2=False, co2fix=283.0, depths=[50,500,3150], advection='LOSCAR', landmodel='Lenton',
                   initial_C_reservoirs=[596.0, 550.0, 1500.0, 730.0, 140.0, 10040.0, 26830.0]):
         
@@ -351,8 +351,9 @@ class EnergyAndCarbonBoxModel:
         self.time = np.linspace(self.startyear, self.endyear, self.nyears)
         
         self.Depths = depths
-        self.advection = advection 
+        self.advection = advection
         self.landmodel = landmodel
+        self.pCO2calc = pCO2calc
         
         #### Model parameters
         # Energy model 
@@ -388,7 +389,8 @@ class EnergyAndCarbonBoxModel:
         self.CarbonModel = self.CarbonBoxModel(co2_emissions, sy=self.startyear, ey=self.endyear,
                                           dt=self.dt, dbg=self.dbg, lfix_co2=lfix_co2, co2fix=co2fix,
                                           initial_C_reservoirs=initial_C_reservoirs, advection=advection,
-                                          landmodel=landmodel, depths=[250, 250, 900])    # Tuned values for CarbonBoxModel
+                                          landmodel=landmodel, depths=[250, 250, 900],     # Tuned values for CarbonBoxModel
+                                          pCO2calc=pCO2calc)
 
 
     def spinup(self, co2fix=283.0, years=3000, silent=False):
@@ -403,7 +405,8 @@ class EnergyAndCarbonBoxModel:
         self.SpinupModel = self.CarbonBoxModel(zero_emissions, sy=0, ey=years, dt=self.dt, dbg=self.dbg,
                                                lfix_co2=True, co2fix=co2fix, advection=self.advection, isSpinup=True,
                                                depths=[self.CarbonModel.d_surface_warm, self.CarbonModel.d_surface_cold,
-                                               self.CarbonModel.d_intermediate], landmodel=self.landmodel)
+                                               self.CarbonModel.d_intermediate], landmodel=self.landmodel,
+                                               pCO2calc=self.pCO2calc, initial_C_reservoirs = self.CarbonModel.reservoir_inits)
 
         
         # change tuning parameters to be as in the Carbon Model        
@@ -631,8 +634,9 @@ class EnergyAndCarbonBoxModel:
     
         # Tuning parameters have default values from Lenton (2000)
         def __init__(self, co2_emissions, sy=1850, ey=2300, dt=1.0, dbg=0, lfix_co2=False, co2fix=283.0,
-                     initial_C_reservoirs = [596.0, 550.0, 1500.0, 730.0, 140.0, 10040.0, 26830.0],
-                     depths=[100, 100, 1000], advection='LOSCAR', isSpinup=False, landmodel='Lenton'):
+                     initial_C_reservoirs = [596.0, 550.0, 1500.0, 730.0, 140.0, 10040.0, 26830.0], 
+                     depths=[100, 100, 1000], advection='LOSCAR', isSpinup=False, landmodel='Lenton',
+                     pCO2calc='HAMOCC'):
         
             self.emission   = co2_emissions # emissions should enter in GT C per year
         
@@ -655,6 +659,7 @@ class EnergyAndCarbonBoxModel:
             self.advection = advection
             self.isSpinup = isSpinup
             self.landmodel = landmodel
+            self.pCO2calc = pCO2calc
         
             ####################################################################################
             ############          Tune these parameters          ###############################
@@ -1049,8 +1054,34 @@ class EnergyAndCarbonBoxModel:
                 talk_w = self.talk_warm
                 talk_c = self.talk_cold
 
-            self.pCO2_oce_warm[i] = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w, po4_w, si_w)
-            self.pCO2_oce_cold[i] = self.__calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c, po4_c, si_c)
+            if self.pCO2calc == 'HAMOCC':
+                # Calculation of ocean pCO2 as in the HAMOCC model (in ICON, ~2021)
+                self.pCO2_oce_warm[i] = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w, po4_w, si_w)
+                self.pCO2_oce_cold[i] = self.__calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c, po4_c, si_c)
+                if self.dbg==3:
+                    print()
+                    print()
+                    print('Warm and cold pCO2:', self.pCO2_oce_warm[i], self.pCO2_oce_cold[i])
+
+            elif self.pCO2calc == 'colostate':
+                # Simpler but still iterative calculation of pCO2 as in a web application:
+                # https://biocycle.atmos.colostate.edu/shiny/carbonate/
+                pH, self.pCO2_oce_warm[i], it = self.__calc_ocean_pCO2_simple_iter(T_warm, salt_w, talk_w, dic_w)
+                if self.dbg==3:
+                    print()
+                    print()
+                    print('Warm calculation input (T, S, TA, DIC): ', T_warm, salt_w, talk_w, dic_w)
+                    print(it, 'iterations to get warm pCO2 and pH:', self.pCO2_oce_warm[i], pH)
+
+                pH, self.pCO2_oce_cold[i], it = self.__calc_ocean_pCO2_simple_iter(T_cold, salt_c, talk_c, dic_c)
+                if self.dbg == 3:
+                    print()
+                    print('Cold calculation input (T, S, TA, DIC): ', T_cold, salt_c, talk_c, dic_c)
+                    print(it, 'iterations to get cold pCO2 and pH:', self.pCO2_oce_cold[i], pH)
+
+            else:
+                sys.exit('No correct choice of pCO2calc ! Can be "HAMOCC" or "colostate", current value: '+self.pCO2calc)
+
             
             self.ocean_flux_warm[i] = self.k_gasex * self.mol_to_GT_C \
                                      * self.ocean_surface_area * self.warm_area_fraction \
@@ -1086,6 +1117,65 @@ class EnergyAndCarbonBoxModel:
             solco2 = carchm.get_solco2(TC,S)
             
             return carchm.get_pco2(dic, hi, ak1, ak2, solco2)
+
+
+        def __calc_ocean_pCO2_simple_iter(self, TC, S, alk, dic, ph_old=8.1):
+            ''' This is taken from
+            https://biocycle.atmos.colostate.edu/shiny/carbonate/
+
+            Need to check original references!
+
+            Calculation of dissociation constants is identical to that in ICON.
+            '''
+
+            alk*=1.0e-3
+            dic*=1.0e-3
+
+            TEMP = TC + 273.15
+            Boron = 1.179e-5 * S
+
+            K0 = np.exp(-60.2409 + 9345.17/TEMP + 23.3585*np.log(TEMP/100.0) \
+                    + S * (0.023517 - 0.00023656*TEMP +0.0047036*(TEMP/100.0)**2) )
+            K1 = np.exp(2.18867 - 2275.036/TEMP - 1.468591 * np.log(TEMP)\
+                    + (-0.138681 - 9.33291/TEMP) * np.sqrt(S) + 0.0726483 * S - 0.00574938 * S**1.5)
+            K2 = np.exp(-0.84226 - 3741.1288/TEMP -1.437139 * np.log(TEMP) \
+                    + (-0.128417 - 24.41239/TEMP) * np.sqrt(S) + 0.1195308 * S - 0.0091284 * S**1.5 )
+
+            Kb = np.exp((-8966.90 - 2890.51 * np.sqrt(S) - 77.942 * S \
+                    + 1.726 * S**1.5 - 0.0993*S**2) / TEMP + (148.0248 + 137.194 * np.sqrt(S) + 1.62247 * S) \
+                    + (-24.4344 - 25.085 * np.sqrt(S) - 0.2474 * S) * np.log(TEMP) + 0.053105 * np.sqrt(S) * TEMP)
+
+
+            # Iterate for H and CA by repeated solution of eqs 13 and 12
+            pH = ph_old # initial guess
+            H = 10.**(-pH)             
+            diff_H = H
+
+            it = 0
+            while diff_H > 1.0e-15:
+                H_old = H                      # remember old value of H
+                
+                # solve Tans' equation 13 for carbonate alkalinity from TA
+                CA = alk - (Kb/(Kb+H)) * Boron
+                
+                # solve quadratic for H (Tans' equation 12)
+                a = CA
+                b = K1 * (CA - dic)
+                c = K1 * K2 * (CA - 2 * dic)
+                H = (-b + np.sqrt(b**2 - 4. * a * c) ) / (2. * a) 
+
+                # How different is new estimate from previous one?
+                diff_H = np.abs(H - H_old)
+                it = it + 1
+
+            # Now solve for CO2 from equation 11 and pCO2 from eq 4
+            CO2aq = CA / (K1/H + 2.0*K1*K2/H**2)  # Eq 11
+            pCO2 = CO2aq / K0 * 1.e6           # Eq 4 (converted to ppmv)
+            pH = -np.log10(H)
+
+            if pH <= 0: sys.exit('Error: negative pH!')
+
+            return pH, pCO2, it
 
 
         def __biological_carbon_pump(self, i, T_surf):

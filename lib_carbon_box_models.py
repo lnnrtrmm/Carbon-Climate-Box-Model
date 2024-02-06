@@ -1,7 +1,5 @@
-
 import numpy as np
 import sys
-import carbon_chemistry as carchm
 
 
 class IMPRSModel:
@@ -351,7 +349,7 @@ class EnergyAndCarbonBoxModel:
         self.time = np.linspace(self.startyear, self.endyear, self.nyears)
         
         self.Depths = depths
-        self.advection = advection 
+        self.advection = advection
         
         #### Model parameters
         # Energy model 
@@ -399,7 +397,7 @@ class EnergyAndCarbonBoxModel:
         self.SpinupModel = self.CarbonBoxModel(zero_emissions, sy=0, ey=years, dt=self.dt, dbg=self.dbg,
                                                lfix_co2=True, co2fix=co2fix, advection=self.advection, isSpinup=True,
                                                depths=[self.CarbonModel.d_surface_warm, self.CarbonModel.d_surface_cold,
-                                               self.CarbonModel.d_intermediate])
+                                               self.CarbonModel.d_intermediate], initial_C_reservoirs = self.CarbonModel.reservoir_inits)
 
         
         # change tuning parameters to be as in the Carbon Model        
@@ -524,9 +522,11 @@ class EnergyAndCarbonBoxModel:
     def getCConcOceanWarm(self):      return self.CarbonModel.C_warm_surf / self.CarbonModel.V_warm
     def getCConcOceanCold(self):      return self.CarbonModel.C_cold_surf / self.CarbonModel.V_cold
     def getCConcOceanInt(self):       return self.CarbonModel.C_int_wat / self.CarbonModel.V_int
-    def getCConcOceanDeep(self):      return self.CarbonModel.C_deep_oce / self.CarbonModel.V_deep
-    def getOceanPco2Warm(self):       return self.CarbonModel.pCO2_oce_warm
-    def getOceanPco2Cold(self):       return self.CarbonModel.pCO2_oce_cold
+    def getCConcOceanDeep(self):      return self.CarbonModel.C_deep_oce / self.CarbonModel.V_dee
+    def getOceanPHWarm(self):         return self.CarbonModel.pH_oce_warm
+    def getOceanPHCold(self):         return self.CarbonModel.pH_oce_cold
+    def getOceanpCO2Warm(self):       return self.CarbonModel.pCO2_oce_warm
+    def getOceanPCO2Cold(self):       return self.CarbonModel.pCO2_oce_cold
     def getLandCarbon(self):          return self.CarbonModel.C_veg + self.CarbonModel.C_soil
     def getOceanCarbon(self):         return self.CarbonModel.C_warm_surf + self.CarbonModel.C_cold_surf \
                                              + self.CarbonModel.C_int_wat + self.CarbonModel.C_deep_oce
@@ -587,17 +587,9 @@ class EnergyAndCarbonBoxModel:
         S_cold_surface_Tsdep = -0.146
     
         # ocean biogeochemistry conditions (from MPI-ESM)
-        po4_warm = 0.00052  # mol m^-3
-        po4_cold = 0.00122  # mol m^-3
-        si_warm = 0.0112    # mol m^-3
-        si_cold = 0.0535    # mol m^-3
         talk_warm = 2.285   # mol m^-3
         talk_cold = 2.236   # mol m^-3
         
-        po4_warm_Tdep   = -0.00003 # mol m^-3 K^-1
-        po4_cold_Tdep   = -0.00003 # mol m^-3 K^-1
-        si_warm_Tdep    = -0.00032 # mol m^-3 K^-1
-        si_cold_Tdep    = -0.00129 # mol m^-3 K^-1
         talk_warm_Tdep  = -0.00230 # mol m^-3 K^-1
         talk_cold_Tdep  = -0.01233 # mol m^-3 K^-1
     
@@ -734,6 +726,9 @@ class EnergyAndCarbonBoxModel:
             self.pCO2_atm      = np.zeros((self.nyears))
             self.pCO2_oce_cold = np.zeros((self.nyears))
             self.pCO2_oce_warm = np.zeros((self.nyears))
+            self.pH_oce_cold = np.zeros((self.nyears))
+            self.pH_oce_warm = np.zeros((self.nyears))
+
             self.__calc_pCO2_atm(0)
             
             # rate containers
@@ -918,6 +913,8 @@ class EnergyAndCarbonBoxModel:
                 print('   dbg ',i,', atm pCO2         : ', self.pCO2_atm[i])
                 print('   dbg ',i,', ocean pCO2 (cold): ', self.pCO2_oce_cold[i])
                 print('   dbg ',i,', ocean pCO2 (warm): ', self.pCO2_oce_warm[i])
+                print('   dbg ',i,', ocean pH (cold): ', self.pH_oce_cold[i])
+                print('   dbg ',i,', ocean pH (warm): ', self.pH_oce_warm[i])
                 print('   dbg ',i,', ocean flux (cold): ', self.ocean_flux_cold[i])
                 print('   dbg ',i,', ocean flux (warm): ', self.ocean_flux_warm[i])
                 print()
@@ -959,27 +956,18 @@ class EnergyAndCarbonBoxModel:
             if self.include_salinity_Tdep:
                 salt_w = self.S0_warm_surface + self.S_warm_surface_Tsdep * Ts
                 salt_c = self.S0_cold_surface + self.S_cold_surface_Tsdep * Ts
-            else:
-                salt_w = self.S0_warm_surface
-                salt_c = self.S0_cold_surface
-        
-            if self.include_nutrient_Tdep:
-                po4_w  = self.po4_warm  + self.po4_warm_Tdep  * Ts
-                po4_c  = self.po4_cold  + self.po4_cold_Tdep  * Ts
-                si_w   = self.si_warm   + self.si_warm_Tdep   * Ts
-                si_c   = self.si_cold   + self.si_cold_Tdep   * Ts
                 talk_w = self.talk_warm + self.talk_warm_Tdep * Ts
                 talk_c = self.talk_cold + self.talk_cold_Tdep * Ts
             else:
-                po4_w  = self.po4_warm 
-                po4_c  = self.po4_cold
-                si_w   = self.si_warm
-                si_c   = self.si_cold
+                salt_w = self.S0_warm_surface
+                salt_c = self.S0_cold_surface
                 talk_w = self.talk_warm
                 talk_c = self.talk_cold
 
-            self.pCO2_oce_warm[i] = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w, po4_w, si_w)
-            self.pCO2_oce_cold[i] = self.__calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c, po4_c, si_c)
+            # Iterative calculation of pCO2
+            self.pH_oce_warm[i], self.pCO2_oce_warm[i], it = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w)
+            self.pH_oce_cold[i], self.pCO2_oce_cold[i], it = self.__calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c)
+
             
             self.ocean_flux_warm[i] = self.k_gasex * self.mol_to_GT_C \
                                      * self.ocean_surface_area * self.warm_area_fraction \
@@ -990,31 +978,64 @@ class EnergyAndCarbonBoxModel:
                                      * (self.pCO2_atm[i] - self.pCO2_oce_cold[i])
         
     
-        def __calc_ocean_pCO2(self, TC, S, alk, dic, po4, sil):
-            # carchm routine does calculations using kmol m^-3
+
+        def __calc_ocean_pCO2(self, TC, S, alk, dic, ph_old=8.1):
+            ''' This is taken from
+            https://biocycle.atmos.colostate.edu/shiny/carbonate/
+
+            Need to check original references!
+
+            Calculation of dissociation constants is identical to that in HAMOCC.
+            '''
+
             alk*=1.0e-3
             dic*=1.0e-3
-            po4*=1.0e-3
-            sil*=1.0e-3
-        
-            all_aks = carchm.calc_diss_const(np.array([0.0]), TC, S)
-        
-            aks = all_aks[0]
-            akf = all_aks[1]
-            ak1p = all_aks[2]
-            ak2p = all_aks[3]
-            ak3p = all_aks[4]
-            aksi = all_aks[5]
-            ak1 = all_aks[6]
-            ak2 = all_aks[7]
-            akb = all_aks[8]
-            akw = all_aks[9]
-            aksp = all_aks[10]
-        
-            hi = carchm.update_hi(dic,ak1,ak2,akw,aks,akf,aksi,ak1p,ak2p,ak3p,S,akb,sil,po4,alk,dim=0, silent=True)
-            solco2 = carchm.get_solco2(TC,S)
-            
-            return carchm.get_pco2(dic, hi, ak1, ak2, solco2)
+
+            TEMP = TC + 273.15
+            Boron = 1.179e-5 * S
+
+            K0 = np.exp(-60.2409 + 9345.17/TEMP + 23.3585*np.log(TEMP/100.0) \
+                    + S * (0.023517 - 0.00023656*TEMP +0.0047036*(TEMP/100.0)**2) )
+            K1 = np.exp(2.18867 - 2275.036/TEMP - 1.468591 * np.log(TEMP)\
+                    + (-0.138681 - 9.33291/TEMP) * np.sqrt(S) + 0.0726483 * S - 0.00574938 * S**1.5)
+            K2 = np.exp(-0.84226 - 3741.1288/TEMP -1.437139 * np.log(TEMP) \
+                    + (-0.128417 - 24.41239/TEMP) * np.sqrt(S) + 0.1195308 * S - 0.0091284 * S**1.5 )
+
+            Kb = np.exp((-8966.90 - 2890.51 * np.sqrt(S) - 77.942 * S \
+                    + 1.726 * S**1.5 - 0.0993*S**2) / TEMP + (148.0248 + 137.194 * np.sqrt(S) + 1.62247 * S) \
+                    + (-24.4344 - 25.085 * np.sqrt(S) - 0.2474 * S) * np.log(TEMP) + 0.053105 * np.sqrt(S) * TEMP)
+
+
+            # Iterate for H and CA by repeated solution of eqs 13 and 12
+            pH = ph_old # initial guess
+            H = 10.**(-pH)             
+            diff_H = H
+
+            it = 0
+            while diff_H > 1.0e-15:
+                H_old = H                      # remember old value of H
+                
+                # solve Tans' equation 13 for carbonate alkalinity from TA
+                CA = alk - (Kb/(Kb+H)) * Boron
+                
+                # solve quadratic for H (Tans' equation 12)
+                a = CA
+                b = K1 * (CA - dic)
+                c = K1 * K2 * (CA - 2 * dic)
+                H = (-b + np.sqrt(b**2 - 4. * a * c) ) / (2. * a) 
+
+                # How different is new estimate from previous one?
+                diff_H = np.abs(H - H_old)
+                it = it + 1
+
+            # Now solve for CO2 from equation 11 and pCO2 from eq 4
+            CO2aq = CA / (K1/H + 2.0*K1*K2/H**2)  # Eq 11
+            pCO2 = CO2aq / K0 * 1.e6           # Eq 4 (converted to ppmv)
+            pH = -np.log10(H)
+
+            if pH <= 0: sys.exit('Error: negative pH!')
+
+            return pH, pCO2, it
 
 
         def __biological_carbon_pump(self, i, T_surf):
