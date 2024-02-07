@@ -13,6 +13,8 @@ This repository contains a simple process-based box model for Temperature and Ca
   - reading in non-CO2 effective radiative forcing computed with FaIR (data from Chris Smith)
 - Ocean temperature box model from Li et al. (2020) (similar to that of FaIR)
   - Three layer ocean box model for the temperature model
+ 
+![Figure not found](CModel_example.png?raw=true "Box model results for scenario SSP2-4.5")
 
 ## References
 
