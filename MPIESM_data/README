@@ -1,0 +1,5 @@
+Data to run the example script.
+
+These are postprocessed data from raw output of MPIESM-LR-v1.2 emission-driven simulations. Some of the metrics, like the atmospheric CO2 concentration are not 100% precise (e.g. for CO2 it is the concentration in the lowest atmosphere level and not the mean over the whole atmosphere).
+
+At some point, these data should be replaced with properly processed data from the cmorized and published MPIESM output on ESGF, which, however, are not available yet.

@@ -63,7 +63,7 @@ for sce in scenarios:
 ##############################################################
 n_sce = len(scenarios)
     
-path='/home/lennart/Arbeit/2_WorldTrans/work/MPIESM/mon_dat/'
+path='MPIESM_data/'
 
 time_MPIESM =np.linspace(1850.5,2299.5,450)
 
