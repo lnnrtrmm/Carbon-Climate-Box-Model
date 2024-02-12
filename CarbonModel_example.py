@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from netCDF4 import Dataset
 
-from lib_carbon_box_models import EnergyAndCarbonBoxModel
+from Climate_Box_Model import EnergyAndCarbonBoxModel
 
 
 ################################################################
