@@ -206,7 +206,7 @@ class EnergyAndCarbonBoxModel:
     def getCConcOceanDeep(self):      return self.CarbonModel.C_deep_oce / self.CarbonModel.V_dee
     def getOceanPHWarm(self):         return self.CarbonModel.pH_oce_warm
     def getOceanPHCold(self):         return self.CarbonModel.pH_oce_cold
-    def getOceanpCO2Warm(self):       return self.CarbonModel.pCO2_oce_warm
+    def getOceanPCO2Warm(self):       return self.CarbonModel.pCO2_oce_warm
     def getOceanPCO2Cold(self):       return self.CarbonModel.pCO2_oce_cold
     def getLandCarbon(self):          return self.CarbonModel.C_veg + self.CarbonModel.C_soil
     def getOceanCarbon(self):         return self.CarbonModel.C_warm_surf + self.CarbonModel.C_cold_surf \
@@ -347,11 +347,8 @@ class EnergyAndCarbonBoxModel:
                                             # default value (-0.3) is fitted to MPIESM data
             self.bio_pump_cold_eff = 0.2 # Transfer efficiency in high latitudes
     
-            # Include T-dependence of ocean surface salinity
+            # Include T-dependence of ocean surface salinity and alkalinity
             self.include_salinity_Tdep = True
-   
-            # Include T-dependence of ocean surface nutrients
-            self.include_nutrient_Tdep = False
         
             # Prescribe land or ocean carbon fluxes during the simulation period?
             self.prescribe_C_flux_land = False        
