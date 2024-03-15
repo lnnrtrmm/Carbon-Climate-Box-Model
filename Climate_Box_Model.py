@@ -203,7 +203,7 @@ class EnergyAndCarbonBoxModel:
     def getCConcOceanWarm(self):      return self.CarbonModel.C_warm_surf / self.CarbonModel.V_warm
     def getCConcOceanCold(self):      return self.CarbonModel.C_cold_surf / self.CarbonModel.V_cold
     def getCConcOceanInt(self):       return self.CarbonModel.C_int_wat / self.CarbonModel.V_int
-    def getCConcOceanDeep(self):      return self.CarbonModel.C_deep_oce / self.CarbonModel.V_dee
+    def getCConcOceanDeep(self):      return self.CarbonModel.C_deep_oce / self.CarbonModel.V_deep
     def getOceanPHWarm(self):         return self.CarbonModel.pH_oce_warm
     def getOceanPHCold(self):         return self.CarbonModel.pH_oce_cold
     def getOceanPCO2Warm(self):       return self.CarbonModel.pCO2_oce_warm
