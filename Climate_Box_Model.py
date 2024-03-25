@@ -66,7 +66,7 @@ class EnergyAndCarbonBoxModel:
         self.CarbonModel = self.CarbonBoxModel(co2_emissions, sy=self.startyear, ey=self.endyear,
                                           dt=self.dt, dbg=self.dbg, lfix_co2=lfix_co2, co2fix=co2fix,
                                           initial_C_reservoirs=initial_C_reservoirs, advection=advection,
-                                          depths=[250, 250, 900])    # Tuned values for CarbonBoxModel
+                                          depths=[300, 250, 600])    # These depths give approximately the best fit with MPIESM
 
 
     def spinup(self, co2fix=283.0, years=3000, silent=False):
@@ -100,6 +100,8 @@ class EnergyAndCarbonBoxModel:
         self.SpinupModel.bio_pump_warm       = self.CarbonModel.bio_pump_warm
         self.SpinupModel.bio_pump_cold       = self.CarbonModel.bio_pump_cold
         self.SpinupModel.bio_pump_cold_eff   = self.CarbonModel.bio_pump_cold_eff
+
+        self.SpinupModel.pCO2_iterative_limit = self.CarbonModel.pCO2_iterative_limit
         
     
         # Spinning up the model without any temperature changes
@@ -273,6 +275,11 @@ class EnergyAndCarbonBoxModel:
         
         talk_warm_Tdep  = -0.00230 # mol m^-3 K^-1
         talk_cold_Tdep  = -0.01233 # mol m^-3 K^-1
+
+
+	# standard pH values from testing
+        pH_oce_cold_init = 8.36
+        pH_oce_warm_init = 8.14
     
         # Tuning parameters have default values from Lenton (2000)
         def __init__(self, co2_emissions, sy=1850, ey=2300, dt=1.0, dbg=0, lfix_co2=False, co2fix=283.0,
@@ -356,6 +363,9 @@ class EnergyAndCarbonBoxModel:
             self.prescribed_C_flux_land = np.zeros((self.nyears))
             self.prescribed_C_flux_ocean = np.zeros((self.nyears))
 
+            # Threshold for difference in H+ concentration during iterative calculation of pCO2:
+            self.pCO2_iterative_limit = 1e-12
+
             ####################################################################################
             ####################################################################################
             ####################################################################################
@@ -404,8 +414,8 @@ class EnergyAndCarbonBoxModel:
             self.pCO2_atm      = np.zeros((self.nyears))
             self.pCO2_oce_cold = np.zeros((self.nyears))
             self.pCO2_oce_warm = np.zeros((self.nyears))
-            self.pH_oce_cold = np.zeros((self.nyears))
-            self.pH_oce_warm = np.zeros((self.nyears))
+            self.pH_oce_cold = np.zeros((self.nyears)) + self.pH_oce_cold_init
+            self.pH_oce_warm = np.zeros((self.nyears)) + self.pH_oce_warm_init
 
             self.__calc_pCO2_atm(0)
             
@@ -422,7 +432,7 @@ class EnergyAndCarbonBoxModel:
             
 
         def update_depths(self,depths):
-            #### Call this before the integration!!!
+            #### Call before the integration if this shall be changed!
             self.d_surface_warm = depths[0]  # m
             self.d_surface_cold = depths[1]
             self.d_intermediate = depths[2]
@@ -643,8 +653,8 @@ class EnergyAndCarbonBoxModel:
                 talk_c = self.talk_cold
 
             # Iterative calculation of pCO2
-            self.pH_oce_warm[i], self.pCO2_oce_warm[i], it = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w)
-            self.pH_oce_cold[i], self.pCO2_oce_cold[i], it = self.__calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c)
+            self.pH_oce_warm[i], self.pCO2_oce_warm[i], it = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w, self.pH_oce_warm[i-1])
+            self.pH_oce_cold[i], self.pCO2_oce_cold[i], it = self.__calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c, self.pH_oce_cold[i-1])
 
             
             self.ocean_flux_warm[i] = self.k_gasex * self.mol_to_GT_C \
@@ -655,64 +665,70 @@ class EnergyAndCarbonBoxModel:
                                      * self.ocean_surface_area * self.cold_area_fraction \
                                      * (self.pCO2_atm[i] - self.pCO2_oce_cold[i])
         
-    
-
         def __calc_ocean_pCO2(self, TC, S, alk, dic, ph_old=8.1):
-            ''' This is taken from
-            https://biocycle.atmos.colostate.edu/shiny/carbonate/
-
-            Need to check original references!
-
-            Calculation of dissociation constants is identical to that in HAMOCC.
+            ''' This is taken from the iLOSCAR model
+            (https://github.com/Shihan150/iloscar/tree/main)
+            Zeebe (2012), https://doi.org/10.5194/gm/d-5-149-2012
+            Li et al. (2024), https://doi.org/10.1016/j.gloplacha.2024.104413
+            
+            This solution to the carbonate chemistry is based on Follows et al. (2006, https://doi.org/10.1016/j.ocemod.2005.05.004)
+            
+            The limit can probably be reduced to 1e-10 in order to speed up the calculation a bit more.
             '''
-
+        
             alk*=1.0e-3
             dic*=1.0e-3
+            
+            TK = TC + 273.15
+            bor = (432.5 * (S/35.0))*1.0e-6
+            #bor = 1.179e-5 * S
 
-            TEMP = TC + 273.15
-            Boron = 1.179e-5 * S
+            # Weiss, 1974
+            kh = np.exp( 9345.17/TK - 60.2409 + 23.3585*np.log(TK/100) \
+                        + S * (0.023517 - 2.3656e-4 * TK + 0.0047036e-4 * TK * TK) )
+            
+            # Mehrbach et al. 1973, efit by Lueker et al. (2000)
+            k1 = 10**(-(3633.86/TK - 61.2172 + 9.6777 * np.log(TK)-0.011555* S + 1.152e-4*S*S))
+            k2 = 10**(-(471.78/TK +25.9290 - 3.16967 * np.log(TK) - 0.01781 * S + 1.122e-4*S*S))
 
-            K0 = np.exp(-60.2409 + 9345.17/TEMP + 23.3585*np.log(TEMP/100.0) \
-                    + S * (0.023517 - 0.00023656*TEMP +0.0047036*(TEMP/100.0)**2) )
-            K1 = np.exp(2.18867 - 2275.036/TEMP - 1.468591 * np.log(TEMP)\
-                    + (-0.138681 - 9.33291/TEMP) * np.sqrt(S) + 0.0726483 * S - 0.00574938 * S**1.5)
-            K2 = np.exp(-0.84226 - 3741.1288/TEMP -1.437139 * np.log(TEMP) \
-                    + (-0.128417 - 24.41239/TEMP) * np.sqrt(S) + 0.1195308 * S - 0.0091284 * S**1.5 )
-
-            Kb = np.exp((-8966.90 - 2890.51 * np.sqrt(S) - 77.942 * S \
-                    + 1.726 * S**1.5 - 0.0993*S**2) / TEMP + (148.0248 + 137.194 * np.sqrt(S) + 1.62247 * S) \
-                    + (-24.4344 - 25.085 * np.sqrt(S) - 0.2474 * S) * np.log(TEMP) + 0.053105 * np.sqrt(S) * TEMP)
+            # Dickson, 1990 in Dickson and Goyet, 1994, Chapter 5
+            kb = np.exp((-8966.90 - 2890.51 * np.sqrt(S) - 77.942 * S \
+                    + 1.728 * S**1.5 - 0.0996*S**2) / TK + (148.0248 + 137.194 * np.sqrt(S) + 1.62142 * S) \
+                    + (-24.4344 - 25.085 * np.sqrt(S) - 0.2474 * S) * np.log(TK) + 0.053105 * np.sqrt(S) * TK)
+            
+            # Millero (1995) in Dickson and Goyet, 1994, Chapter 5
+            kw = np.exp((-13847.26/TK + 148.96502 - 23.6521 * np.log(TK)) + \
+                        (118.67/TK -5.977 +1.0495 * np.log(TK)) * np.sqrt(S) - 0.01615 * S )
 
 
-            # Iterate for H and CA by repeated solution of eqs 13 and 12
-            pH = ph_old # initial guess
-            H = 10.**(-pH)             
-            diff_H = H
+            # Initial guess of H         
+            hx = 10.**(-ph_old)
 
-            it = 0
-            while diff_H > 1.0e-15:
-                H_old = H                      # remember old value of H
+            for it in range(20):
+                hgss = hx                      # remember old value of H
                 
-                # solve Tans' equation 13 for carbonate alkalinity from TA
-                CA = alk - (Kb/(Kb+H)) * Boron
+                bo4hg = bor*kb/(hgss+kb)
+                fg = -bo4hg - (kw/hgss) + hgss
+                calkg = alk + fg
+                gam = dic/calkg
                 
-                # solve quadratic for H (Tans' equation 12)
-                a = CA
-                b = K1 * (CA - dic)
-                c = K1 * K2 * (CA - 2 * dic)
-                H = (-b + np.sqrt(b**2 - 4. * a * c) ) / (2. * a) 
+                tmp = (1-gam)*(1-gam)*k1*k1 - 4 *k1 *k2 *(1-2*gam)
+                
+                hx = 0.5 *((gam-1)*k1+np.sqrt(tmp))
+                temp = np.abs(hx-hgss) - self.pCO2_iterative_limit
+                
+                if temp<0 :
+                    break
+                    
+            
 
-                # How different is new estimate from previous one?
-                diff_H = np.abs(H - H_old)
-                it = it + 1
-
-            # Now solve for CO2 from equation 11 and pCO2 from eq 4
-            CO2aq = CA / (K1/H + 2.0*K1*K2/H**2)  # Eq 11
-            pCO2 = CO2aq / K0 * 1.e6           # Eq 4 (converted to ppmv)
-            pH = -np.log10(H)
+            co2 = dic/(1+k1/hx + k1*k2/hx/hx)
+            pCO2 = co2 / kh * 1.e6
+            pH = -np.log10(hx)
 
             if pH <= 0: sys.exit('Error: negative pH!')
-
+            if it > 0: print(it)
+                
             return pH, pCO2, it
 
 
