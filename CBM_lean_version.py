@@ -8,13 +8,14 @@ class EnergyAndCarbonBoxModel:
     The carbon box model is a combination of different existing carbon cycle models
     (Lenton (2000), LOSCAR (Zeebe, 2012)).
     Radiative forcing is read in from CMIP6 data.
+    
+    This is a "lean" version, where some old options and debugging output etc. are removed.
+
     """
 
-    def __init__(self, co2_emissions, ERF_nonco2, sy=1850, ey=2300, dt=1.0, dbg=0,
-                  lfix_co2=False, co2fix=283.0, depths=[50,500,3150], advection='LOSCAR',
+    def __init__(self, co2_emissions, ERF_nonco2, sy=1850, ey=2300, dt=1.0,
+                  lfix_co2=False, co2fix=283.0, depths=[50,500,3150],
                   initial_C_reservoirs=[596.0, 550.0, 1500.0, 730.0, 140.0, 10040.0, 26830.0]):
-        
-        self.dbg = dbg
         
         # Timestep:
         self.startyear = sy
@@ -25,7 +26,6 @@ class EnergyAndCarbonBoxModel:
         self.time = np.linspace(self.startyear, self.endyear, self.nyears)
         
         self.Depths = depths
-        self.advection = advection
         
         #### Model parameters
         # Energy model 
@@ -33,12 +33,8 @@ class EnergyAndCarbonBoxModel:
         self.w_E = 1.0e-6 # m s^-1
         self.w_D = 0.4e-6 # m s^-1
         self.C_ML = 2.0e8 # W s m^-2 K^-1 
-        #self.R4co2 = 7.4  # W m^-2
         self.beta = 1.33  # dmnl
-    
-        # self.epsilon = 0.47 # ppmv GtC^-1
-        # self.delta   = 0.0215 # yr^-1
-        # self.B       = 0.15 * self.delta * self.epsilon
+
         
         self.pi_co2  = 283.0
 
@@ -59,8 +55,8 @@ class EnergyAndCarbonBoxModel:
         
         
         self.CarbonModel = self.CarbonBoxModel(co2_emissions, sy=self.startyear, ey=self.endyear,
-                                          dt=self.dt, dbg=self.dbg, lfix_co2=lfix_co2, co2fix=co2fix,
-                                          initial_C_reservoirs=initial_C_reservoirs, advection=advection,
+                                          dt=self.dt, lfix_co2=lfix_co2, co2fix=co2fix,
+                                          initial_C_reservoirs=initial_C_reservoirs,
                                           depths=[300, 250, 600])    # These depths give approximately the best fit with MPIESM
 
 
@@ -70,7 +66,7 @@ class EnergyAndCarbonBoxModel:
         zero_emissions = np.zeros(ny)
         
         # initiating a spinup model
-        self.SpinupModel = self.CarbonBoxModel(zero_emissions, sy=0, ey=years, dt=self.dt, dbg=self.dbg,
+        self.SpinupModel = self.CarbonBoxModel(zero_emissions, sy=0, ey=years, dt=self.dt,
                                                lfix_co2=True, co2fix=co2fix, advection=self.advection, isSpinup=True,
                                                depths=[self.CarbonModel.d_surface_warm, self.CarbonModel.d_surface_cold,
                                                self.CarbonModel.d_intermediate], initial_C_reservoirs = self.CarbonModel.reservoir_inits)
@@ -85,13 +81,7 @@ class EnergyAndCarbonBoxModel:
         self.SpinupModel.k_mix_cold_deep     = self.CarbonModel.k_mix_cold_deep       # Advection as in LOSCAR (Zeebe, 2012)
         self.SpinupModel.k_mix_warm_int      = self.CarbonModel.k_mix_warm_int        # Advection as in LOSCAR (Zeebe, 2012)
 
-        self.SpinupModel.k_int_deep_exchange = self.CarbonModel.k_int_deep_exchange   # Advection as in Lenton (2000)
-        self.SpinupModel.k_warm_int_exchange = self.CarbonModel.k_warm_int_exchange   # Advection as in Lenton (2000)
-        self.SpinupModel.k_hl_over           = self.CarbonModel.k_hl_over             # Advection as in Lenton (2000)
-        self.SpinupModel.k_THC_over          = self.CarbonModel.k_THC_over            # Advection as in Lenton (2000)
-
         self.SpinupModel.k_gasex             = self.CarbonModel.k_gasex
-        self.SpinupModel.include_bio_pump    = self.CarbonModel.include_bio_pump
         self.SpinupModel.bio_pump_warm       = self.CarbonModel.bio_pump_warm
         self.SpinupModel.bio_pump_cold       = self.CarbonModel.bio_pump_cold
         self.SpinupModel.bio_pump_cold_eff   = self.CarbonModel.bio_pump_cold_eff
@@ -100,9 +90,7 @@ class EnergyAndCarbonBoxModel:
         
     
         # Spinning up the model without any temperature changes
-        if not silent: print('Spinning up the model...')
         for i in range(0,ny-1): self.SpinupModel.step_forward(i, 0.0, 0.0, 0.0)
-        if not silent: print('   ...finished')
             
         new_inits = self.SpinupModel.getFinalCReservoirs()
             
@@ -276,16 +264,11 @@ class EnergyAndCarbonBoxModel:
         pH_oce_warm_init = 8.14
     
         # Tuning parameters have default values from Lenton (2000)
-        def __init__(self, co2_emissions, sy=1850, ey=2300, dt=1.0, dbg=0, lfix_co2=False, co2fix=283.0,
+        def __init__(self, co2_emissions, sy=1850, ey=2300, dt=1.0, lfix_co2=False, co2fix=283.0,
                      initial_C_reservoirs = [596.0, 550.0, 1500.0, 730.0, 140.0, 10040.0, 26830.0],
-                     depths=[100, 100, 1000], advection='LOSCAR', isSpinup=False):
+                     depths=[100, 100, 1000], isSpinup=False):
         
             self.emission   = co2_emissions # emissions should enter in GT C per year
-        
-            self.dbg=dbg # 0: no debug output
-                         # 1: C mass check output
-                         # 2: print out fluxes
-                         # 3: print out mixing coefficients
         
             # Timestep:
             self.startyear = sy
@@ -318,13 +301,7 @@ class EnergyAndCarbonBoxModel:
             self.k_mm                = 1.478
             self.k_A                 = 8.7039e9
             self.k_B                 = 157.072
-                    
-            ###  Ocean
-            ## advection rates for Lenton advection
-            self.k_THC_over          = 6.5e7   # Lenton default:  6.5e7 m^3 s^-1
-            self.k_hl_over           = 4.87e7  # Lenton detault:  4.87e7 m^3 s^-1
-            self.k_warm_int_exchange = 1.25e7  # Lenton default:  1.25e7 m^3 s^-1
-            self.k_int_deep_exchange = 20.0e7  # Lenton default: 20.0e7 m^3 s^-1
+
             
             ## advection rates for LOSCAR-like advection
             # values are defaults from LOSCAR (Zeebe, 2012)
@@ -333,23 +310,18 @@ class EnergyAndCarbonBoxModel:
             self.k_conveyor = 2.0e7
             
             # Overturning circulation dependent on Warming?
-            self.include_Tdep_advection = False
-            self.advection_Tdep_frac = -0.089 
+            self.advection_Tdep_frac = 0   # Set to 0 in default setup. MPIESM value: -0.089 
             
             ## gas exchange rate
             self.k_gasex = 0.06   # LOSCAR default: 0.06 mol (uatm m^2 yr)^-1
         
             ## biological carbon pump
-            self.include_bio_pump = True
             self.bio_pump_warm = 0.6  # GtC yr^-1; Carbon export in low latitudes;
             self.bio_pump_cold = 6.9  # GtC yr^-1; Carbon export in high latitudes;
                                       # default value (6.9) is fitted to MPIESM data
             self.bio_pump_cold_T_dep = -0.3 # GtC yr^-1 K^-1; Temperature dependence of carbon export;
                                             # default value (-0.3) is fitted to MPIESM data
             self.bio_pump_cold_eff = 0.2 # Transfer efficiency in high latitudes
-    
-            # Include T-dependence of ocean surface salinity and alkalinity
-            self.include_salinity_Tdep = True
         
             # Prescribe land or ocean carbon fluxes during the simulation period?
             self.prescribe_C_flux_land = False        
@@ -444,14 +416,7 @@ class EnergyAndCarbonBoxModel:
                 self.C_total[0] += modification
             
             
-        def step_forward(self, i, T_surf, T_thermo, T_deep):
-
-            if self.dbg == 1:
-                print()
-                print()
-                self.__calc_total_carbon(i)
-                print('   dbg ',i,', atm pCO2 before fluxes:', self.pCO2_atm[i])   
-                print('   dbg ',i,', total carbon before fluxes:', self.C_total[i])            
+        def step_forward(self, i, T_surf, T_thermo, T_deep):     
             
             ######################################################
             ############ Land component ##########################
@@ -476,38 +441,12 @@ class EnergyAndCarbonBoxModel:
             if not self.co2_is_fixed:
                 self.C_atm[i+1]  = self.C_atm[i]  - self.dt * (self.land_flux_total[i])
         
-            # Debug output
-            if self.dbg == 1:
-                tmp_total_C = self.C_atm[i+1] + self.C_veg[i+1] + self.C_soil[i+1] \
-                                + self.C_warm_surf[i] + self.C_cold_surf[i] \
-                                + self.C_int_wat[i] + self.C_deep_oce[i]
-                print('   dbg ',i,', total carbon after vegetation fluxes:', tmp_total_C)  
-        
-        
             ######################################################
             ############ Adding emissions ########################
             ######################################################
             
             if not self.co2_is_fixed:
                 self.C_atm[i+1] = self.C_atm[i+1] + self.dt * self.emission[i]
-
-            
-
-            if self.dbg == 2 and not self.prescribe_C_flux_land:
-                print()
-                print()
-                print('   dbg ',i,', old C in vegetation: ',  self.C_veg[i])
-                print('   dbg ',i,', old C in soil      : ',  self.C_soil[i])
-                print('   dbg ',i,', old C in atmosphere: ',  self.C_atm[i])
-                print()
-                print('   dbg ',i,', photosynthesis: ', - self.photosynthesis[i])
-                print('   dbg ',i,', respiration: ', self.respiration[i])
-                print('   dbg ',i,', soil_respiration: ', self.soil_respiration[i])
-                print('   dbg ',i,', total land flux: ',  self.land_flux_total[i])
-                print()
-                print('   dbg ',i,', new C in vegetation: ',  self.C_veg[i+1])
-                print('   dbg ',i,', new C in soil      : ',  self.C_soil[i+1])
-                print('   dbg ',i,', new C in atmosphere: ',  self.C_atm[i+1])
 
 
             self.__calc_pCO2_atm(i+1)
@@ -520,14 +459,6 @@ class EnergyAndCarbonBoxModel:
             if self.prescribe_C_flux_ocean:
                 self.ocean_flux_total[i] = self.prescribed_C_flux_ocean[i]
                 self.C_atm[i+1] = self.C_atm[i+1] - self.dt * self.ocean_flux_total[i]
-
-                if self.dbg == 2:
-                    print()
-                    print()
-                    print('   dbg ',i,', total ocean flux: ',  self.ocean_flux_total[i])
-                    print('   dbg ',i,', new C in atmosphere: ',  self.C_atm[i+1])
-                return
-            
         
             self.__calc_surface_ocean_flux(i, T_surf)
             self.ocean_flux_total[i] = self.ocean_flux_warm[i] + self.ocean_flux_cold[i]
@@ -538,38 +469,19 @@ class EnergyAndCarbonBoxModel:
             if not self.co2_is_fixed:
                 self.C_atm[i+1] = self.C_atm[i+1] - self.dt * self.ocean_flux_total[i]
         
-            self.__calc_pCO2_atm(i+1)
-            
-            if self.dbg == 1:
-                tmp_total_C = self.C_atm[i+1] + self.C_veg[i+1] + self.C_soil[i+1] \
-                                + self.C_warm_surf[i] + self.C_cold_surf[i] \
-                                + self.C_int_wat[i] + self.C_deep_oce[i]
-                print('   dbg ',i,', total carbon after ocean fluxes:', tmp_total_C)  
-            
+            self.__calc_pCO2_atm(i+1)          
             
             ########### ocean internal restructuring ###########
                 
             #### Biological carbon pump
-            if self.include_bio_pump: self.__biological_carbon_pump(i, T_surf)
+            self.__biological_carbon_pump(i, T_surf)
             
-            ##### Advect the oceanic carbon
-            if self.advection=='Lenton':
-                tmp_C_warm, tmp_C_cold, tmp_C_int, tmp_C_deep = self.__advect_ocean_tracer(i, T_surf, 
+            tmp_C_warm, tmp_C_cold, tmp_C_int, tmp_C_deep = self.__advect_ocean_tracer(i, T_surf,
                                                                                 self.C_warm_surf[i] / self.V_warm,
                                                                                 self.C_cold_surf[i] / self.V_cold,
                                                                                 self.C_int_wat[i]   / self.V_int,
                                                                                 self.C_deep_oce[i]  / self.V_deep)
-
-            elif self.advection=='LOSCAR':
-                tmp_C_warm, tmp_C_cold, tmp_C_int, tmp_C_deep = self.__advect_ocean_tracer_LOSCAR(i, T_surf,
-                                                                                self.C_warm_surf[i] / self.V_warm,
-                                                                                self.C_cold_surf[i] / self.V_cold,
-                                                                                self.C_int_wat[i]   / self.V_int,
-                                                                                self.C_deep_oce[i]  / self.V_deep)
-            else:
-                sys.exit('No correct choice of advection model! Can be "Lenton" or "LOSCAR", current value: '+self.advection)
         
-
             ## Final update of the tracer concentrations
             self.C_warm_surf[i+1] = tmp_C_warm * self.V_warm
             self.C_cold_surf[i+1] = tmp_C_cold * self.V_cold
@@ -577,32 +489,6 @@ class EnergyAndCarbonBoxModel:
             self.C_deep_oce[i+1]  = tmp_C_deep * self.V_deep
 
             self.__calc_total_carbon(i+1)
-        
-            # Debugging output
-            if self.dbg == 1:
-                tmp_total_atm = self.C_atm[i+1] + self.C_veg[i+1] + self.C_soil[i+1]
-                tmp_total_oce_before = self.C_warm_surf[i] + self.C_cold_surf[i] + self.C_int_wat[i] + self.C_deep_oce[i]
-                tmp_total_oce_after = self.C_warm_surf[i+1] + self.C_cold_surf[i+1] + self.C_int_wat[i+1] + self.C_deep_oce[i+1]
-            
-                print('   dbg ',i,', total carbon after advection', self.C_total[i+1])            
-                print('   dbg ',i,', ocean carbon before advection', tmp_total_oce_before)            
-                print('   dbg ',i,', ocean carbon after advection', tmp_total_oce_after)            
-            
-        
-            if self.dbg == 2:
-                print()
-                print()
-                print('   dbg ',i,', atm pCO2         : ', self.pCO2_atm[i])
-                print('   dbg ',i,', ocean pCO2 (cold): ', self.pCO2_oce_cold[i])
-                print('   dbg ',i,', ocean pCO2 (warm): ', self.pCO2_oce_warm[i])
-                print('   dbg ',i,', ocean pH (cold): ', self.pH_oce_cold[i])
-                print('   dbg ',i,', ocean pH (warm): ', self.pH_oce_warm[i])
-                print('   dbg ',i,', ocean flux (cold): ', self.ocean_flux_cold[i])
-                print('   dbg ',i,', ocean flux (warm): ', self.ocean_flux_warm[i])
-                print()
-                print('   dbg ',i,', total ocean flux: ', self.ocean_flux_total[i])
-                print('   dbg ',i,', atm C inv. after fluxes:', self.C_atm[i+1])
-
         
         def __calc_total_carbon(self,i):
             self.C_total[i] = self.C_atm[i] + self.C_veg[i] + self.C_soil[i] + self.C_warm_surf[i] + self.C_cold_surf[i] \
@@ -635,18 +521,12 @@ class EnergyAndCarbonBoxModel:
             dic_w = self.C_warm_surf[i] / self.mol_to_GT_C / self.V_warm
             dic_c = self.C_cold_surf[i] / self.mol_to_GT_C / self.V_cold
 
-            if self.include_salinity_Tdep:
-                salt_w = self.S0_warm_surface + self.S_warm_surface_Tsdep * Ts
-                salt_c = self.S0_cold_surface + self.S_cold_surface_Tsdep * Ts
-                talk_w = self.talk_warm + self.talk_warm_Tdep * Ts
-                talk_c = self.talk_cold + self.talk_cold_Tdep * Ts
-            else:
-                salt_w = self.S0_warm_surface
-                salt_c = self.S0_cold_surface
-                talk_w = self.talk_warm
-                talk_c = self.talk_cold
+            salt_w = self.S0_warm_surface + self.S_warm_surface_Tsdep * Ts
+            salt_c = self.S0_cold_surface + self.S_cold_surface_Tsdep * Ts
+            talk_w = self.talk_warm + self.talk_warm_Tdep * Ts
+            talk_c = self.talk_cold + self.talk_cold_Tdep * Ts
 
-            # Iterative calculation of pCO2
+
             self.pH_oce_warm[i], self.pCO2_oce_warm[i], it = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w, self.pH_oce_warm[i-1])
             self.pH_oce_cold[i], self.pCO2_oce_cold[i], it = self.__calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c, self.pH_oce_cold[i-1])
 
@@ -699,21 +579,18 @@ class EnergyAndCarbonBoxModel:
             # Initial guess of H         
             hx = 10.**(-ph_old)
 
-            for it in range(20):
-                hgss = hx                      # remember old value of H
+            ### Just calculates H+ once in this setup, because it basically always converges in the first try, if dt <= 1 year
+
+            hgss = hx
                 
-                bo4hg = bor*kb/(hgss+kb)
-                fg = -bo4hg - (kw/hgss) + hgss
-                calkg = alk + fg
-                gam = dic/calkg
+            bo4hg = bor*kb/(hgss+kb)
+            fg = -bo4hg - (kw/hgss) + hgss
+            calkg = alk + fg
+            gam = dic/calkg
+
+            tmp = (1-gam)*(1-gam)*k1*k1 - 4 *k1 *k2 *(1-2*gam)
                 
-                tmp = (1-gam)*(1-gam)*k1*k1 - 4 *k1 *k2 *(1-2*gam)
-                
-                hx = 0.5 *((gam-1)*k1+np.sqrt(tmp))
-                temp = np.abs(hx-hgss) - self.pCO2_iterative_limit
-                
-                if temp<0 :
-                    break
+            hx = 0.5 *((gam-1)*k1+np.sqrt(tmp)) 
                     
             
 
@@ -722,7 +599,6 @@ class EnergyAndCarbonBoxModel:
             pH = -np.log10(hx)
 
             if pH <= 0: sys.exit('Error: negative pH!')
-            if it > 0: print(it)
                 
             return pH, pCO2, it
 
@@ -732,51 +608,21 @@ class EnergyAndCarbonBoxModel:
             C_exp_cold = self.bio_pump_cold + self.bio_pump_cold_T_dep * T_surf
             C_inp_int  = C_exp_warm + C_exp_cold * (1.0 - self.bio_pump_cold_eff)
             C_inp_deep = C_exp_cold * self.bio_pump_cold_eff
-                
-            if self.dbg == 1:            
-                tmp_total_oce_before = self.C_warm_surf[i] + self.C_cold_surf[i] + self.C_int_wat[i] + self.C_deep_oce[i]
 
             self.C_warm_surf[i] = self.C_warm_surf[i] - self.dt * C_exp_warm
             self.C_cold_surf[i] = self.C_cold_surf[i] - self.dt * C_exp_cold
             self.C_int_wat[i]   = self.C_int_wat[i]   + self.dt * C_inp_int
             self.C_deep_oce[i]  = self.C_deep_oce[i]  + self.dt * C_inp_deep
-            
-            if self.dbg == 1:            
-                tmp_total_oce_after = self.C_warm_surf[i] + self.C_cold_surf[i] + self.C_int_wat[i] + self.C_deep_oce[i]
-                
-                print('   dbg ',i,', ocean carbon before bio pump', tmp_total_oce_before)            
-                print('   dbg ',i,', ocean carbon after bio pump ', tmp_total_oce_after)
-
             return
     
+    
         def __advect_ocean_tracer(self, i, Ts, C_w, C_c, C_i, C_d):
-            ### assumes a list of tracer concentrations is given in order:
-            ## C_warm, C_cold, C_int, C_deep 
-        
-            if self.include_Tdep_advection:
-                k_T  = self.k_THC_over + self.advection_Tdep_frac * self.k_THC_over * Ts
-                k_U  = self.k_hl_over  + self.advection_Tdep_frac * self.k_hl_over  * Ts
-            else:
-                k_T  = self.k_THC_over
-                k_U  = self.k_hl_over
-            k_O = k_T + k_U
-            k_wi = self.k_warm_int_exchange
-            k_id = self.k_int_deep_exchange
-        
-            Cw = C_w + (self.dts / self.V_warm) * ( (k_T+k_wi)*C_i - (k_T+k_wi)*C_w )
-            Cc = C_c + (self.dts / self.V_cold) * ( k_T*C_w + k_U*C_i - k_O*C_c )
-            Ci = C_i + (self.dts / self.V_int) * ( (k_O+k_id)*C_d + k_wi*C_w - (k_O + k_wi + k_id)*C_i )
-            Cd = C_d + (self.dts / self.V_deep) * ( k_O*C_c + k_id*C_i - (k_O + k_id)*C_d )
-            
-            return Cw, Cc, Ci, Cd
-    
-    
-        def __advect_ocean_tracer_LOSCAR(self, i, Ts, C_w, C_c, C_i, C_d):
             ### assumes a list of tracer concentrations is given in order:
             ## C_warm, C_cold, C_int, C_deep
             
             k_T = self.k_conveyor
-            if self.include_Tdep_advection: k_T  += self.advection_Tdep_frac * self.k_conveyor * Ts
+            # Temperature dependence of advection
+            k_T  += self.advection_Tdep_frac * self.k_conveyor * Ts
 
             k_wi = self.k_mix_warm_int
             k_cd = self.k_mix_cold_deep
