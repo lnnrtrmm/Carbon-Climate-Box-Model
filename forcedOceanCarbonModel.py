@@ -66,48 +66,9 @@ class CarbonBoxModel:
         ## gas exchange rate
         self.k_gasex = 0.06   # LOSCAR default: 0.06 mol (uatm m^2 yr)^-1
 
-
-
-
-        #### ocean conditions (from MPI-ESM)
-
-        ## Relating temperature in the surface layers to global mean T anomaly
-        ## Default values are from fitting MPI-ESM1.2-LR emission-driven runs
-        ## X0 value is the mean value at STA=0.0 and Tsdep is the slope in a linear fit.
-
-        # pot. Temperature
-        T0_warm_surface      = 18.64
-        T_warm_surface_Tsdep = 0.61
-
-        T0_cold_surface      = 1.01
-        T_cold_surface_Tsdep = 0.41
-
-        # Salinity
-        S0_warm_surface      = 34.774
-        S_warm_surface_Tsdep = -0.028
-
-        S0_cold_surface      = 33.498
-        S_cold_surface_Tsdep = -0.146
-
-        # ocean biogeochemistry conditions (from MPI-ESM)
-        talk_warm = 2.285   # mol m^-3
-        talk_cold = 2.236   # mol m^-3
-    
-        talk_warm_Tdep  = -0.00230 # mol m^-3 K^-1
-        talk_cold_Tdep  = -0.01233 # mol m^-3 K^-1
-
-        # standard pH values from testing
+        ## These might neeed to be adjusted to enusre convergence of pH solver in first iteration
         pH_oce_cold_init = 8.36
         pH_oce_warm_init = 8.14
-
-    
-        ## biological carbon pump
-        self.bio_pump_warm = 0.6  # GtC yr^-1; Carbon export in low latitudes;
-        self.bio_pump_cold = 6.9  # GtC yr^-1; Carbon export in high latitudes;
-                                  # default value (6.9) is fitted to MPIESM data
-        self.bio_pump_cold_T_dep = -0.3 # GtC yr^-1 K^-1; Temperature dependence of carbon export;
-                                        # default value (-0.3) is fitted to MPIESM data
-        self.bio_pump_cold_eff = 0.2 # Transfer efficiency in high latitudes
 
         ####################################################################################
         ####################################################################################
@@ -116,14 +77,13 @@ class CarbonBoxModel:
         # model settings
         self.warm_area_fraction = 0.85
         self.cold_area_fraction = 1.0 - self.warm_area_fraction
-        self.d_surface_warm = depths[0]  # m
-        self.d_surface_cold = depths[1]
-        self.d_intermediate = depths[2]
-        
-        self.V_warm = self.d_surface_warm * self.ocean_surface_area * self.warm_area_fraction
-        self.V_cold = self.d_surface_cold * self.ocean_surface_area * self.cold_area_fraction
-        self.V_int = self.d_intermediate * self.ocean_surface_area
-        self.V_deep = self.ocean_volume - self.V_warm - self.V_cold - self.V_int
+
+
+
+
+        # Setting the depths and volumes of the ocean
+        self.update_depths(depths)
+
         
 
         ### Initialisation of variables
@@ -178,6 +138,81 @@ class CarbonBoxModel:
         self.V_cold = self.d_surface_cold * self.ocean_surface_area * self.cold_area_fraction
         self.V_int = self.d_intermediate * self.ocean_surface_area
         self.V_deep = self.ocean_volume - self.V_warm - self.V_cold - self.V_int
+
+        self.__update_surface_ocean_inputs()
+
+
+    def __update_surface_ocean_inputs(self):
+        
+        #### Surface ocean conditions (from MPI-ESM)
+
+        ## Relating temperature, salinity, alkalinity and the carbon export in the surface layer boxes
+        ## to the global mean T anomaly and the thickness of the surface layer
+
+        ## Default values are from fitting MPI-ESM1.2-LR emission-driven runs
+        ## X0 value is the mean value at STA=0.0 and Tslope is the slope in a linear fit. As the values
+        ## of these fit parameters are themselves dependent on the thickness of the surface layer, 
+        ## the fits have been conducted for all possible layer thicknesses in MPI-ESM between 50 and 500 m.
+        ## Subsequently, the fit parameters were fitted themselves with a quadratic fit to be able to calculate
+        ## the fit values here directly for a given surface layer thickness.
+
+        # Surface ocean pot. temperature
+        T_slope_cold_params = np.asarray([-2.34e-7, 1.39e-4, 0.41])
+        T0_cold_params = np.asarray([-6.71e-7, 2.50e-3, 0.87])
+
+        Tslope_warm_params = np.asarray([1.09e-6, -9.54e-4, 0.69])
+        T0_warm_params = np.asarray([2-13e-5, -2.5e-2, 20.7])
+
+        # Surface ocean pot. salinity
+        S_slope_cold_params = np.asarray([-3.26e-7, 4.19e-4, -0.178])
+        S0_cold_params = np.asarray([-5.49e-6, 5.05e-3, 33.071])
+
+        S_slope_warm_params = np.asarray([-1.63e-7, 1.54e-4, -0.041])
+        S0_warm_params = np.asarray([-2.2e-6, 1.58e-3, 34.658])
+
+        # Surface ocean alkalinity
+        Alk_slope_cold_params = np.asarray([-1.86e-8, 2.76e-5, -1.447e-2])
+        Alk0_cold_params = np.asarray([-3.35e-7, 3.09e-4, 2.2098])
+
+        Alk_slope_warm_params = np.asarray([-1.45e-8, 1.23e-5, -3.33e-3])
+        Alk0_warm_params = np.asarray([-7.80e-8, 8.10e-5, 2.2786])
+
+        # Biologial carbon export from surface layer
+        # -> Only use T-dependency for high latitude bio pump, as low latitude is almost constant in MPIESM
+        Biopump_slope_cold_params = np.asarray([-1.76e-6, 1.45e-3, -0.407])
+        Biopump_cold_params = np.asarray([3.22e-5, -2.96e-2, 9.186])
+
+        Biopump_warm_params = np.asarray([4.1e-6, -3.55e-3, 0.889])
+
+        # Transfer efficiency is completely constant (and 0 in low latitudes)
+        self.bio_pump_cold_eff = 0.2
+
+        
+        #### Now make the initial value and slopes out of the parameters:
+        self.T0_cold_surface = self.__quadraticFit(self.d_surface_cold, T0_cold_params)
+        self.T0_warm_surface = self.__quadraticFit(self.d_surface_warm, T0_warm_params)
+        self.T_cold_surface_Tslope = self.__quadraticFit(self.d_surface_cold, T_slope_cold_params)
+        self.T_warm_surface_Tslope = self.__quadraticFit(self.d_surface_warm, T_slope_warm_params)
+        
+        self.S0_cold_surface = self.__quadraticFit(self.d_surface_cold, S0_cold_params)
+        self.S0_warm_surface = self.__quadraticFit(self.d_surface_warm, S0_warm_params)
+        self.S_cold_surface_Tslope = self.__quadraticFit(self.d_surface_cold, S_slope_cold_params)
+        self.S_warm_surface_Tslope = self.__quadraticFit(self.d_surface_warm, S_slope_warm_params)
+
+        self.Alk0_cold_surface = self.__quadraticFit(self.d_surface_cold, Alk0_cold_params)
+        self.Alk0_warm_surface = self.__quadraticFit(self.d_surface_warm, Alk0_warm_params)
+        self.Alk_cold_surface_Tslope = self.__quadraticFit(self.d_surface_cold, Alk_slope_cold_params)
+        self.Alk_warm_surface_Tslope = self.__quadraticFit(self.d_surface_warm, Alk_slope_warm_params)
+
+        self.bio_pump_cold = self.__quadraticFit(self.d_surface_cold, Biopump_cold_params)
+        self.bio_pump_warm = self.__quadraticFit(self.d_surface_warm, Biopump_warm_params)
+        self.bio_pump_cold_Tslope = self.__quadraticFit(self.d_surface_cold, Biopump_slope_cold_params)
+        return
+
+
+    def __quadraticFit(self, depth, params):
+        return params[0]*depth**2 + params[1]*depth + params[2]
+
         
 
     def modify_initial_reservoirs(self,modifications):
@@ -242,16 +277,16 @@ class CarbonBoxModel:
     
     def __calc_surface_ocean_flux(self, i, Ts):
         # tropical and high latitude oceans should warm differently under global warming !
-        T_warm = self.T_warm_surface_Tsdep * Ts + self.T0_warm_surface
-        T_cold = self.T_cold_surface_Tsdep * Ts + self.T0_cold_surface
+        T_warm = self.T_warm_surface_Tslope * Ts + self.T0_warm_surface
+        T_cold = self.T_cold_surface_Tslope * Ts + self.T0_cold_surface
     
         dic_w = self.C_warm_surf[i] / self.mol_to_GT_C / self.V_warm
         dic_c = self.C_cold_surf[i] / self.mol_to_GT_C / self.V_cold
 
-        salt_w = self.S0_warm_surface + self.S_warm_surface_Tsdep * Ts
-        salt_c = self.S0_cold_surface + self.S_cold_surface_Tsdep * Ts
-        talk_w = self.talk_warm + self.talk_warm_Tdep * Ts
-        talk_c = self.talk_cold + self.talk_cold_Tdep * Ts
+        salt_w = self.S0_warm_surface + self.S_warm_surface_Tslope * Ts
+        salt_c = self.S0_cold_surface + self.S_cold_surface_Tslope * Ts
+        talk_w = self.Alk0_warm_surface + self.Alk_warm_Tslope * Ts
+        talk_c = self.Alk0_cold_surface + self.Alk_cold_Tslope * Ts
 
 
         self.pH_oce_warm[i], self.pCO2_oce_warm[i], it = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w, self.pH_oce_warm[i-1])
@@ -332,7 +367,7 @@ class CarbonBoxModel:
 
     def __biological_carbon_pump(self, i, T_surf):
         C_exp_warm = self.bio_pump_warm
-        C_exp_cold = self.bio_pump_cold + self.bio_pump_cold_T_dep * T_surf
+        C_exp_cold = self.bio_pump_cold + self.bio_pump_cold_Tslope * T_surf
         C_inp_int  = C_exp_warm + C_exp_cold * (1.0 - self.bio_pump_cold_eff)
         C_inp_deep = C_exp_cold * self.bio_pump_cold_eff
 
