@@ -1,6 +1,9 @@
 import numpy as np
 import sys
 
+
+
+
 class CarbonBoxModel:
     """A class of a carbon cycle model orginially based on that from Lenton (2000).
     The model consists of 7 distinct C reservoirs (4 oce, 2 land, 1 atm).
@@ -24,17 +27,18 @@ class CarbonBoxModel:
     ocean_volume = 1.36e18        # m^3
     mole_volume_atm = 1.773e20    # moles
     mol_to_GT_C = 12.0107e-15     # GT C (mol C)^-1
-    pi_co2  = 283.0               # ppm
     epsilon = 0.47                # ppm/Gt C
 
     # Tuning parameters have default values from Lenton (2000)
-    def __init__(self, co2_emissions, nbp, tas, sy=1850, ey=2300, dt=1.0, lfix_co2=False, co2fix=283.0,
-                 initial_C_reservoirs = [596.0, 730.0, 140.0, 10040.0, 26830.0],
-                 depths=[100, 100, 1000], isSpinup=False):
+    def __init__(self, co2_emissions, nbp, tas, sy=1850, ey=2300, dt=1.0, pi_co2=283.0,
+                 initial_C_reservoirs = [730.0, 140.0, 10040.0, 26830.0],
+                 depths=[100, 100, 1000]):
     
         self.emission   = co2_emissions # emissions should enter in GT C per year
         self.land_flux_total = nbp
         self.STA = sta
+
+        self.pi_co2 = pi_co2
     
         # Timestep:
         self.startyear = sy
@@ -42,13 +46,7 @@ class CarbonBoxModel:
         self.dt = dt
         self.dts = self.dt * 365.25 * 24 * 3600.
         self.nyears = int((self.endyear - self.startyear) / self.dt) + 1
-    
-        # run with constant atm. CO2?
-        self.co2_is_fixed = lfix_co2
-        self.fixed_co2_value = co2fix
-    
-        self.isSpinup = isSpinup
-    
+        
         ####################################################################################
         ################          Tuning parameters          ###############################
         ####################################################################################
@@ -66,10 +64,6 @@ class CarbonBoxModel:
         ## gas exchange rate
         self.k_gasex = 0.06   # LOSCAR default: 0.06 mol (uatm m^2 yr)^-1
 
-        ## These might neeed to be adjusted to enusre convergence of pH solver in first iteration
-        pH_oce_cold_init = 8.36
-        pH_oce_warm_init = 8.14
-
         ####################################################################################
         ####################################################################################
         ####################################################################################
@@ -78,9 +72,6 @@ class CarbonBoxModel:
         self.warm_area_fraction = 0.85
         self.cold_area_fraction = 1.0 - self.warm_area_fraction
 
-
-
-
         # Setting the depths and volumes of the ocean
         self.update_depths(depths)
 
@@ -88,17 +79,21 @@ class CarbonBoxModel:
 
         ### Initialisation of variables
 
+        ## These neeed to be adjusted to ensure convergence of pH solver in first iteration
+        self.pH_oce_cold_init = 8.36
+        self.pH_oce_warm_init = 8.14
+
         # reservoir containers
-        self.C_atm = np.zeros((self.nyears))
+        self.C_atm = np.zeros((self.nyears)) + self.pi_co2 / self.epsilon
 
         self.C_warm_surf = np.zeros((self.nyears))
         self.C_cold_surf = np.zeros((self.nyears))
         self.C_int_wat = np.zeros((self.nyears))
         self.C_deep_oce = np.zeros((self.nyears))
         
-        self.C_total = np.zeros((self.nyears))
+        self.C_total = np.copy(self.C_atm)
         
-        self.reservoirs = [self.C_atm, self.C_warm_surf, self.C_cold_surf, self.C_int_wat, self.C_deep_oce]
+        self.reservoirs = [self.C_warm_surf, self.C_cold_surf, self.C_int_wat, self.C_deep_oce]
         
         # initial reservoir values
         self.reservoir_inits = initial_C_reservoirs
@@ -107,12 +102,9 @@ class CarbonBoxModel:
         for res_i, init_reservoir in enumerate(self.reservoir_inits):
             self.reservoirs[res_i][0] = init_reservoir 
             self.C_total[0] += init_reservoir
-            
-        if self.co2_is_fixed:
-            self.C_atm[:] = self.fixed_co2_value / self.epsilon
         
         # atmospheric and oceanic pCO2
-        self.pCO2_atm      = np.zeros((self.nyears))
+        self.pCO2_atm      = np.zeros((self.nyears)) + self.pi_co2
         self.pCO2_oce_cold = np.zeros((self.nyears))
         self.pCO2_oce_warm = np.zeros((self.nyears))
         self.pH_oce_cold = np.zeros((self.nyears)) + self.pH_oce_cold_init
@@ -221,8 +213,40 @@ class CarbonBoxModel:
             self.reservoirs[res_i][0] += modification
             self.C_total[0] += modification
         
+    def spinup(self, nyears=3000):
+
+        for i in range(nyears):  
         
-    def integrate(self):     
+            self.__calc_surface_ocean_flux(0, 0.0)
+            self.ocean_flux_total[0] = self.ocean_flux_warm[0] + self.ocean_flux_cold[0]
+
+            ##### Updating reservoirs due to ocean-flux
+            self.C_warm_surf[0] = self.C_warm_surf[0] + self.dt * self.ocean_flux_warm[0]
+            self.C_cold_surf[0] = self.C_cold_surf[0] + self.dt * self.ocean_flux_cold[0]
+                
+            ########### ocean internal restructuring ###########
+                
+            #### Biological carbon pump
+            self.__biological_carbon_pump(0, 0.0)
+            
+            tmp_C_warm, tmp_C_cold, tmp_C_int, tmp_C_deep = self.__advect_ocean_tracer(0, 0.0,
+                                                                                self.C_warm_surf[0] / self.V_warm,
+                                                                                self.C_cold_surf[0] / self.V_cold,
+                                                                                self.C_int_wat[0]   / self.V_int,
+                                                                                self.C_deep_oce[0]  / self.V_deep)
+        
+            ## Final update of the tracer concentrations
+            self.C_warm_surf[0] = tmp_C_warm * self.V_warm
+            self.C_cold_surf[0] = tmp_C_cold * self.V_cold
+            self.C_int_wat[0]   = tmp_C_int  * self.V_int
+            self.C_deep_oce[0]  = tmp_C_deep * self.V_deep
+
+            self.__calc_total_carbon(0)
+
+        
+    def integrate(self):
+
+        self.spinup()
         
         for i in range(self.nyears-1):
 
@@ -250,9 +274,9 @@ class CarbonBoxModel:
             ########### ocean internal restructuring ###########
                 
             #### Biological carbon pump
-            self.__biological_carbon_pump(i, T_surf)
+            self.__biological_carbon_pump(i, self.STA[i])
             
-            tmp_C_warm, tmp_C_cold, tmp_C_int, tmp_C_deep = self.__advect_ocean_tracer(i, T_surf,
+            tmp_C_warm, tmp_C_cold, tmp_C_int, tmp_C_deep = self.__advect_ocean_tracer(i, self.STA[i],
                                                                                 self.C_warm_surf[i] / self.V_warm,
                                                                                 self.C_cold_surf[i] / self.V_cold,
                                                                                 self.C_int_wat[i]   / self.V_int,
@@ -396,6 +420,6 @@ class CarbonBoxModel:
     
         return Cw, Cc, Ci, Cd
 
-    def getInitialCReservoirs(self):  return [self.C_atm[0], self.C_warm_surf[0], self.C_cold_surf[0], self.C_int_wat[0], self.C_deep_oce[0]]
-    def getFinalCReservoirs(self):    return [self.C_atm[-1],self.C_warm_surf[-1], self.C_cold_surf[-1], self.C_int_wat[-1], self.C_deep_oce[-1]]
+    def getInitialCReservoirs(self):  return [self.C_warm_surf[0], self.C_cold_surf[0], self.C_int_wat[0], self.C_deep_oce[0]]
+    def getFinalCReservoirs(self):    return [self.C_warm_surf[-1], self.C_cold_surf[-1], self.C_int_wat[-1], self.C_deep_oce[-1]]
 
