@@ -28,24 +28,44 @@ class CarbonBoxModel:
     mole_volume_atm = 1.773e20    # moles
     mol_to_GT_C = 12.0107e-15     # GT C (mol C)^-1
     epsilon = 0.47                # ppm/Gt C
+    secondsPerYear = 365.25 * 24 * 3600 # s/yr
 
     # Tuning parameters have default values from Lenton (2000)
-    def __init__(self, co2_emissions, nbp, tas, sy=1850, ey=2300, dt=1.0, pi_co2=283.0,
+    def __init__(self, co2_emissions, nbp, sta, sy=1850, ey=2300, dt=1.0, pi_co2=283.0, dbg=0,
                  initial_C_reservoirs = [730.0, 140.0, 10040.0, 26830.0],
-                 depths=[100, 100, 1000]):
+                 depths=[100, 250, 900], spinupLength=5000, dt_spinup=1.0):
     
-        self.emission   = co2_emissions # emissions should enter in GT C per year
-        self.land_flux_total = nbp
-        self.STA = sta
-
-        self.pi_co2 = pi_co2
-    
+        self.dbg = dbg
         # Timestep:
         self.startyear = sy
         self.endyear = ey
         self.dt = dt
-        self.dts = self.dt * 365.25 * 24 * 3600.
         self.nyears = int((self.endyear - self.startyear) / self.dt) + 1
+
+        if self.dt == 1.0:
+            self.emission        = co2_emissions # emissions should enter in GT C per year
+            self.land_flux_total = nbp
+            self.STA             = sta
+            self.nStepsPerYear   = 1
+        elif self.dt < 1.0:
+            self.nStepsPerYear = int(1 / dt )
+            self.emission = np.zeros(self.nyears)
+            self.land_flux_total = np.zeros(self.nyears)
+            self.STA = np.zeros(self.nyears)
+
+            for i in range(len(co2_emissions)):
+                n = self.nStepsPerYear
+                self.emission[i*n:i*n+n] = co2_emissions[i]
+                self.land_flux_total[i*n:i*n+n] = nbp[i]
+                self.STA[i*n:i*n+n] = sta[i]
+        else:
+            sys.exit('Time step dt should not be larger than 1 year')
+
+
+        self.pi_co2 = pi_co2
+        self.spinupLength = spinupLength
+        self.dt_spinup = dt_spinup
+    
         
         ####################################################################################
         ################          Tuning parameters          ###############################
@@ -63,6 +83,14 @@ class CarbonBoxModel:
         
         ## gas exchange rate
         self.k_gasex = 0.06   # LOSCAR default: 0.06 mol (uatm m^2 yr)^-1
+
+
+        self.withTdepSurfTemp = True
+        self.withTdepSurfSal = True
+        self.withTdepSurfAlk = True
+        self.withTdepBiopump = True
+
+
 
         ####################################################################################
         ####################################################################################
@@ -82,6 +110,9 @@ class CarbonBoxModel:
         ## These neeed to be adjusted to ensure convergence of pH solver in first iteration
         self.pH_oce_cold_init = 8.36
         self.pH_oce_warm_init = 8.14
+
+        # 1e-10 is typically sufficient
+        self.pCO2_iterative_limit = 1e-10
 
         # reservoir containers
         self.C_atm = np.zeros((self.nyears)) + self.pi_co2 / self.epsilon
@@ -116,7 +147,6 @@ class CarbonBoxModel:
         self.ocean_flux_warm = np.zeros((self.nyears))
         self.ocean_flux_cold = np.zeros((self.nyears))
         
-        self.land_flux_total = np.zeros((self.nyears))
         self.ocean_flux_total = np.zeros((self.nyears))
         
 
@@ -152,8 +182,8 @@ class CarbonBoxModel:
         T_slope_cold_params = np.asarray([-2.34e-7, 1.39e-4, 0.41])
         T0_cold_params = np.asarray([-6.71e-7, 2.50e-3, 0.87])
 
-        Tslope_warm_params = np.asarray([1.09e-6, -9.54e-4, 0.69])
-        T0_warm_params = np.asarray([2-13e-5, -2.5e-2, 20.7])
+        T_slope_warm_params = np.asarray([1.09e-6, -9.54e-4, 0.69])
+        T0_warm_params = np.asarray([2.13e-5, -2.5e-2, 20.7])
 
         # Surface ocean pot. salinity
         S_slope_cold_params = np.asarray([-3.26e-7, 4.19e-4, -0.178])
@@ -162,7 +192,7 @@ class CarbonBoxModel:
         S_slope_warm_params = np.asarray([-1.63e-7, 1.54e-4, -0.041])
         S0_warm_params = np.asarray([-2.2e-6, 1.58e-3, 34.658])
 
-        # Surface ocean alkalinity
+        # Surface ocean alkalinit
         Alk_slope_cold_params = np.asarray([-1.86e-8, 2.76e-5, -1.447e-2])
         Alk0_cold_params = np.asarray([-3.35e-7, 3.09e-4, 2.2098])
 
@@ -177,7 +207,7 @@ class CarbonBoxModel:
         Biopump_warm_params = np.asarray([4.1e-6, -3.55e-3, 0.889])
 
         # Transfer efficiency is completely constant (and 0 in low latitudes)
-        self.bio_pump_cold_eff = 0.2
+        self.bio_pump_cold_eff = 0.2 
 
         
         #### Now make the initial value and slopes out of the parameters:
@@ -213,9 +243,14 @@ class CarbonBoxModel:
             self.reservoirs[res_i][0] += modification
             self.C_total[0] += modification
         
-    def spinup(self, nyears=3000):
+    def spinup(self):
 
-        for i in range(nyears):  
+        if self.dbg==1: print('Spinning up the model')
+
+        tmp_dt = self.dt
+        self.dt = self.dt_spinup
+
+        for i in range(int(self.spinupLength/self.dt)):  
         
             self.__calc_surface_ocean_flux(0, 0.0)
             self.ocean_flux_total[0] = self.ocean_flux_warm[0] + self.ocean_flux_cold[0]
@@ -242,17 +277,37 @@ class CarbonBoxModel:
             self.C_deep_oce[0]  = tmp_C_deep * self.V_deep
 
             self.__calc_total_carbon(0)
+            if self.dbg == 1:
+                print('  '+str(i))
+                print('   ... ocean carbon uptake:', self.ocean_flux_total[0])
+
+        self.dt = tmp_dt
+        if self.dbg == 1: print('Spinup done')
 
         
     def integrate(self):
+
+        if not self.withTdepSurfTemp:
+            self.T_cold_surface_Tslope = 0.0
+            self.T_warm_surface_Tslope = 0.0
+
+        if not self.withTdepSurfSal:
+            self.S_cold_surface_Tslope = 0.0
+            self.S_warm_surface_Tslope = 0.0
+
+        if not self.withTdepSurfAlk:
+            self.Alk_cold_surface_Tslope = 0.0
+            self.Alk_warm_surface_Tslope = 0.0
+
+        if not self.withTdepBiopump:
+            self.bio_pump_cold_Tslope = 0.0
 
         self.spinup()
         
         for i in range(self.nyears-1):
 
             ############ Updating atmospheric CO2 based on land flux and emissions
-            if not self.co2_is_fixed:
-                self.C_atm[i+1]  = self.C_atm[i]  + self.dt * (self.emission[i] - self.land_flux_total[i])
+            self.C_atm[i+1]  = self.C_atm[i]  + self.dt * (self.emission[i] - self.land_flux_total[i])
 
             self.__calc_pCO2_atm(i+1)
         
@@ -266,8 +321,8 @@ class CarbonBoxModel:
             ##### Updating reservoirs due to ocean-flux
             self.C_warm_surf[i] = self.C_warm_surf[i] + self.dt * self.ocean_flux_warm[i]
             self.C_cold_surf[i] = self.C_cold_surf[i] + self.dt * self.ocean_flux_cold[i]
-            if not self.co2_is_fixed:
-                self.C_atm[i+1] = self.C_atm[i+1] - self.dt * self.ocean_flux_total[i]
+
+            self.C_atm[i+1] = self.C_atm[i+1] - self.dt * self.ocean_flux_total[i]
         
             self.__calc_pCO2_atm(i+1)          
             
@@ -309,12 +364,26 @@ class CarbonBoxModel:
 
         salt_w = self.S0_warm_surface + self.S_warm_surface_Tslope * Ts
         salt_c = self.S0_cold_surface + self.S_cold_surface_Tslope * Ts
-        talk_w = self.Alk0_warm_surface + self.Alk_warm_Tslope * Ts
-        talk_c = self.Alk0_cold_surface + self.Alk_cold_Tslope * Ts
+        talk_w = self.Alk0_warm_surface + self.Alk_warm_surface_Tslope * Ts
+        talk_c = self.Alk0_cold_surface + self.Alk_cold_surface_Tslope * Ts
+
+        if self.dbg == 1:
+            print(i, 'calculating surface ocean fluxes')
+            print('   T_warm: ', T_warm)
+            print('   T_cold: ', T_cold)
+            print('   S_warm: ', salt_w,)
+            print('   S_cold: ', salt_c)
+            print('   talk_warm: ', talk_w)
+            print('   talk_cold: ', talk_c)
+            print('   dic_warm: ', dic_w)
+            print('   dic_warm: ', dic_c)
 
 
-        self.pH_oce_warm[i], self.pCO2_oce_warm[i], it = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w, self.pH_oce_warm[i-1])
-        self.pH_oce_cold[i], self.pCO2_oce_cold[i], it = self.__calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c, self.pH_oce_cold[i-1])
+        self.pH_oce_warm[i], self.pCO2_oce_warm[i] = self.__calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w, self.pH_oce_warm[i-1])
+        self.pH_oce_cold[i], self.pCO2_oce_cold[i] = self.__calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c, self.pH_oce_cold[i-1])
+
+        if self.dbg == 1:
+            print(i, '....calulcated the ocean pH:', self.pH_oce_warm[i], self.pH_oce_cold[i])
 
         
         self.ocean_flux_warm[i] = self.k_gasex * self.mol_to_GT_C \
@@ -324,6 +393,11 @@ class CarbonBoxModel:
         self.ocean_flux_cold[i] = self.k_gasex * self.mol_to_GT_C \
                                  * self.ocean_surface_area * self.cold_area_fraction \
                                  * (self.pCO2_atm[i] - self.pCO2_oce_cold[i])
+
+
+        if self.dbg == 1:
+            print(i, '....calulcated the surface fluxes:', self.ocean_flux_warm[i], self.ocean_flux_cold[i])
+            print()
         return
     
 
@@ -365,28 +439,38 @@ class CarbonBoxModel:
         # Initial guess of H         
         hx = 10.**(-ph_old)
 
-        ### Just calculates H+ once in this setup, because it basically always converges in the first try, if dt <= 1 year
-
-        hgss = hx
+        for it in range(20):
+            hgss = hx
             
-        bo4hg = bor*kb/(hgss+kb)
-        fg = -bo4hg - (kw/hgss) + hgss
-        calkg = alk + fg
-        gam = dic/calkg
+            bo4hg = bor*kb/(hgss+kb)
+            fg = -bo4hg - (kw/hgss) + hgss
+            calkg = alk + fg
+            gam = dic/calkg
 
-        tmp = (1-gam)*(1-gam)*k1*k1 - 4 *k1 *k2 *(1-2*gam)
-            
-        hx = 0.5 *((gam-1)*k1+np.sqrt(tmp)) 
+            tmp = (1-gam)*(1-gam)*k1*k1 - 4 *k1 *k2 *(1-2*gam)    
+            hx = 0.5 *((gam-1)*k1+np.sqrt(tmp)) 
+
+            change = np.abs(hx-hgss) - self.pCO2_iterative_limit
+            if change < 0: break
                 
-        
+        if self.dbg == 2: print(it, 'steps needed in iterative pH solver')
 
         co2 = dic/(1+k1/hx + k1*k2/hx/hx)
         pCO2 = co2 / kh * 1.e6
         pH = -np.log10(hx)
 
-        if pH <= 0: sys.exit('Error: negative pH!')
+        if pH <= 0:
+            print('pH got negative! Model settings:')
+            print('  d_warm:', self.d_surface_warm, 'm')
+            print('  d_cold:', self.d_surface_cold, 'm')
+            print('  d_int:', self.d_intermediate, 'm')
+            print('  k_mix_WI:', self.k_mix_warm_int*1e-6, 'Sv')
+            print('  k_mix_CD:', self.k_mix_cold_deep*1e-6, 'Sv')
+            print('  k_conveyor:', self.k_conveyor*1e-6, 'Sv')
+            print('  k_gasex:', self.k_gasex, 'm/s')
+            #sys.exit('Error: negative pH!')
             
-        return pH, pCO2, it
+        return pH, pCO2
 
 
     def __biological_carbon_pump(self, i, T_surf):
@@ -412,14 +496,24 @@ class CarbonBoxModel:
 
         k_wi = self.k_mix_warm_int
         k_cd = self.k_mix_cold_deep
+
+        dts = self.dt * self.secondsPerYear
         
-        Cw = C_w + (self.dts / self.V_warm) * ( k_wi * (C_i - C_w) )
-        Cc = C_c + (self.dts / self.V_cold) * ( k_T * (C_i - C_c) + k_cd * (C_d - C_c) )
-        Ci = C_i + (self.dts / self.V_int)  * ( k_T * (C_d - C_i) - k_wi * (C_i - C_w) )
-        Cd = C_d + (self.dts / self.V_deep) * ( k_T * (C_c - C_d) - k_cd * (C_d - C_c) )
+        Cw = C_w + (dts / self.V_warm) * ( k_wi * (C_i - C_w) )
+        Cc = C_c + (dts / self.V_cold) * ( k_T * (C_i - C_c) + k_cd * (C_d - C_c) )
+        Ci = C_i + (dts / self.V_int)  * ( k_T * (C_d - C_i) - k_wi * (C_i - C_w) )
+        Cd = C_d + (dts / self.V_deep) * ( k_T * (C_c - C_d) - k_cd * (C_d - C_c) )
     
         return Cw, Cc, Ci, Cd
 
     def getInitialCReservoirs(self):  return [self.C_warm_surf[0], self.C_cold_surf[0], self.C_int_wat[0], self.C_deep_oce[0]]
     def getFinalCReservoirs(self):    return [self.C_warm_surf[-1], self.C_cold_surf[-1], self.C_int_wat[-1], self.C_deep_oce[-1]]
 
+    def getOceanCarbon(self): return self.C_warm_surf + self.C_cold_surf + self.C_int_wat + self.C_deep_oce
+
+    def getTime(self): return np.linspace(self.startyear, self.endyear, self.nyears)
+    def getTimeYearly(self): return np.linspace(self.startyear, self.endyear, int((self.nyears-1)/self.dt)) + 0.5
+
+    def getAtmCGrowth(self): return np.append(0, self.C_atm[1:]-self.C_atm[:-1]) / self.dt
+
+    def getOceanFluxTotalYearly(self): return np.mean(self.ocean_flux_total[:-1].reshape(-1,self.nStepsPerYear), axis=1)
