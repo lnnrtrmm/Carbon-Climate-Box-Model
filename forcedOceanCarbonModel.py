@@ -17,29 +17,37 @@ class ForcedOceanCarbonModel:
 
     # Tuning parameters have default values from Lenton (2000)
     def __init__(self, co2_emissions, nbp, sta, ModelType='4BoxOcean', sy=1850, ey=2300, dt=0.1, dbg=0,
-                 pi_co2=283.0, initial_C_reservoirs = [730.0, 140.0, 10000.0, 26830.0],
-                 depths=[100, 250, 900], advection='LOSCAR', airSeaExchange='LOSCAR'):
+                 pi_co2=283.0, advection='LOSCAR', airSeaExchange='LOSCAR'):
 
+        if ModelType == '2BoxOcean':
+            self.depths = np.asarray([100])
+            initial_C_reservoirs = [870.0, 36870.0]
+        elif ModelType == '3BoxOcean': 
+            self.depths = np.asarray([100, 250])
+            initial_C_reservoirs = [730.0, 140.0, 36870.0]
+        elif ModelType == '4BoxOcean':
+            self.depths = np.asarray([100, 250, 900])
+            initial_C_reservoirs = [730.0, 140.0, 10040.0, 26830.0]
+        else:
+            sys.exit('ModelType not allowed: '+ModelType)
 
-        if ModelType not in ['3BoxOcean', '4BoxOcean']: sys.exit('ModelType not allowed!')
-        else: self.ModelType = ModelType
+        self.ModelType = ModelType
 
-        if advection not in ['3BoxOcean', 'LOSCAR', 'Lenton']: sys.exit('Advection scheme not allowed!')
+        if advection not in ['2BoxOcean', '3BoxOcean', 'LOSCAR', 'Lenton']: sys.exit('Advection scheme not allowed!')
         else: self.advection = advection
 
         if airSeaExchange not in ['LOSCAR', 'HAMOCC']: sys.exit('AirSeaExchange scheme not allowed!')
         else: self.airSeaExchange = airSeaExchange
 
-        if self.ModelType == '4BoxOcean' and self.advection == '3BoxOcean': 
-            print('Warning: 4BoxOcean ModelType not compatible with 3BoxOcean advection scheme, setting to LOSCAR advection')
+        if self.ModelType == '4BoxOcean' and self.advection not in ['Lenton', 'LOSCAR']: 
+            print('Warning: wrong advection scheme given for 4BoxOcean ModelType, setting to LOSCAR advection')
             self.advection = 'LOSCAR'
-        elif self.ModelType == '3BoxOcean' and self.advection in ['Lenton', 'LOSCAR']:
-            print('Warning: 3BoxOcean ModelType not compatible with Lenton or LOSCAR advection scheme, setting to 3BoxOcean advection')
+        elif self.ModelType == '3BoxOcean' and self.advection not in ['3BoxOcean']:
+            print('Warning: 3BoxOcean ModelType only compatible with 3BoxOcean advection, set to 3BoxOcean')
             self.advection = '3BoxOcean'
-
-        if dbg == 3:
-            print(self.advection, self.airSeaExchange, self.ModelType)
-
+        elif self.ModelType == '2BoxOcean' and self.advection not in ['2BoxOcean']:
+            print('Warning: 2BoxOcean ModelType only compatible with 2BoxOcean advection, set to 2BoxOcean')
+            self.advection = '2BoxOcean'
 
         self.dbg = dbg
         # Timestep:
@@ -90,10 +98,13 @@ class ForcedOceanCarbonModel:
             self.k_mix_WI  = 63.0e6
             self.k_mix_CD  = 17.0e6
             self.k_HL_over = 20.0e6
-        elif self.advection == '3Box':
-            self.k_mix_WD = 100.0e6
-            self.k_mix_CD = 30.0e6
+        elif self.advection == '3BoxOcean':
+            self.k_mix_WD = 10.0e6
+            self.k_mix_CD = 120.0e6
             self.k_over = 20.0e6
+        elif self.advection == '2BoxOcean':
+            self.k_mix_SD = 20.0e6
+
 
 
         # Overturning circulation dependent on Warming?
@@ -131,7 +142,8 @@ class ForcedOceanCarbonModel:
         # reservoir containers
         self.C_atm = np.zeros((self.nyears)) + self.pi_co2 / epsilon
 
-        if self.ModelType == '3BoxOcean': self.nOce = 3
+        if self.ModelType == '2BoxOcean': self.nOce = 2
+        elif self.ModelType == '3BoxOcean': self.nOce = 3
         elif self.ModelType == '4BoxOcean': self.nOce = 4
         self.C_oce = np.zeros((self.nOce, self.nyears))
 
@@ -140,16 +152,13 @@ class ForcedOceanCarbonModel:
         self.cold_area_fraction = 1.0 - self.warm_area_fraction
 
         # Setting the depths and volumes of the ocean
-        self.update_depths(depths)
+        self.update_depths(self.depths)
 
         self.C_total = np.copy(self.C_atm)
         self.C_totalOce = np.zeros_like(self.C_atm)
-         
-        # initial reservoir values
-        self.reservoir_inits = initial_C_reservoirs
         
         # initialize the carbon reservoir containers
-        for res_i, init_reservoir in enumerate(self.reservoir_inits):
+        for res_i, init_reservoir in enumerate(initial_C_reservoirs):
             self.C_oce[res_i, 0] = init_reservoir 
             self.C_total[0] += init_reservoir
             self.C_totalOce[0] += init_reservoir
@@ -171,14 +180,30 @@ class ForcedOceanCarbonModel:
         
 
     def update_depths(self,depths):
+
+        # Adapting the ocean C reservoirs, so that spinup starts with matching C concentration and pH
+        depthFactors = np.asarray(depths)/self.depths
+
+        C_surfChange = np.sum(self.C_oce[:-1,0]*depthFactors - self.C_oce[:-1,0])
+
+        self.C_oce[:-1,0] = self.C_oce[:-1,0]*depthFactors
+        self.C_oce[-1,0] += - C_surfChange
+
         #### Call before the integration if this shall be changed!
-        if self.ModelType == '3BoxOcean' and len(depths)==2:
+        if self.ModelType == '2BoxOcean' and len(depths)==1:
+            self.depths = np.asarray(depths) 
+            self.V_oce = np.zeros(self.nOce)
+    
+            self.V_oce[0] = self.depths[0] * ocean_surface_area
+            self.V_oce[1] = ocean_volume - np.sum(self.V_oce[:-1])
+
+        elif self.ModelType == '3BoxOcean' and len(depths)==2:
             self.depths = np.asarray(depths) 
             self.V_oce = np.zeros(self.nOce)
     
             self.V_oce[0] = self.depths[0] * ocean_surface_area * self.warm_area_fraction
             self.V_oce[1] = self.depths[1] * ocean_surface_area * self.cold_area_fraction
-            self.V_oce[2] = ocean_volume - np.sum(self.V_oce[:2])
+            self.V_oce[2] = ocean_volume - np.sum(self.V_oce[:-1])
 
         elif self.ModelType == '4BoxOcean' and len(depths)==3:
             self.depths = np.asarray(depths) 
@@ -187,9 +212,9 @@ class ForcedOceanCarbonModel:
             self.V_oce[0] = self.depths[0] * ocean_surface_area * self.warm_area_fraction
             self.V_oce[1] = self.depths[1] * ocean_surface_area * self.cold_area_fraction
             self.V_oce[2] = self.depths[2] * ocean_surface_area
-            self.V_oce[3] = ocean_volume - np.sum(self.V_oce[:3])
+            self.V_oce[3] = ocean_volume - np.sum(self.V_oce[:-1])
         else:
-            sys.exit('Number of given layer depths does not fit ModelType!')
+            sys.exit('Number of given layer depths ('+str(len(depths))+') does not fit ModelType ('+self.ModelType+')!')
 
         self.__update_surface_ocean_inputs()
 
@@ -209,29 +234,29 @@ class ForcedOceanCarbonModel:
         
             self.__calc_surface_ocean_flux(0, 0.0)
 
-            self.__calc_total_carbon(0)
-            if self.dbg == 1:
-                print('   ... ocean carbon uptake:', self.ocean_flux_total[0])
-                print('   ... total ocean carbon before biopump:', self.C_totalOce[0])
+            #self.__calc_total_carbon(0)
+            #if self.dbg == 1:
+            #    print('   ... ocean carbon uptake:', self.ocean_flux_total[0])
+            #    print('   ... total ocean carbon before biopump:', self.C_totalOce[0])
                 
             ########### ocean internal restructuring ###########
                 
             #### Biological carbon pump
             self.__biological_carbon_pump(0, 0.0)
 
-            self.__calc_total_carbon(0)
+            #self.__calc_total_carbon(0)
             
-            if self.dbg == 1:
-                print('   ... total ocean carbon after biopump:', self.C_totalOce[0])
+            #if self.dbg == 1:
+            #    print('   ... total ocean carbon after biopump:', self.C_totalOce[0])
             
             ##### Advect the oceanic carbon
             self.__advect_ocean_tracer(0, 0.0, lspinup=True)
 
-            self.__calc_total_carbon(0)
+            #self.__calc_total_carbon(0)
 
 
-            if self.dbg == 1:
-                print('   ... total ocean carbon after advection', self.C_totalOce[0])
+            #if self.dbg == 1:
+            #    print('   ... total ocean carbon after advection', self.C_totalOce[0])
 
 
         if self.dbg == 1: print('Spinup done')
@@ -339,24 +364,42 @@ class ForcedOceanCarbonModel:
 
         
         #### Now make the initial value and slopes out of the parameters:
-        self.T0_cold_surface = OP.quadraticFit(self.depths[1], T0_cold_params)
         self.T0_warm_surface = OP.quadraticFit(self.depths[0], T0_warm_params)
-        self.T_cold_surface_Tslope = OP.quadraticFit(self.depths[1], T_slope_cold_params)
         self.T_warm_surface_Tslope = OP.quadraticFit(self.depths[0], T_slope_warm_params)
-        
-        self.S0_cold_surface = OP.quadraticFit(self.depths[1], S0_cold_params)
         self.S0_warm_surface = OP.quadraticFit(self.depths[0], S0_warm_params)
-        self.S_cold_surface_Tslope = OP.quadraticFit(self.depths[1], S_slope_cold_params)
         self.S_warm_surface_Tslope = OP.quadraticFit(self.depths[0], S_slope_warm_params)
-
-        self.Alk0_cold_surface = OP.quadraticFit(self.depths[1], Alk0_cold_params)
         self.Alk0_warm_surface = OP.quadraticFit(self.depths[0], Alk0_warm_params)
-        self.Alk_cold_surface_Tslope = OP.quadraticFit(self.depths[1], Alk_slope_cold_params)
         self.Alk_warm_surface_Tslope = OP.quadraticFit(self.depths[0], Alk_slope_warm_params)
-
-        self.bio_pump_cold = OP.quadraticFit(self.depths[1], Biopump_cold_params)
         self.bio_pump_warm = OP.quadraticFit(self.depths[0], Biopump_warm_params)
-        self.bio_pump_cold_Tslope = OP.quadraticFit(self.depths[1], Biopump_slope_cold_params)
+
+        if self.ModelType == '2BoxOcean':
+            self.T0_cold_surface = OP.quadraticFit(self.depths[0], T0_cold_params)
+            self.T_cold_surface_Tslope = OP.quadraticFit(self.depths[0], T_slope_cold_params)
+            self.S0_cold_surface = OP.quadraticFit(self.depths[0], S0_cold_params)
+            self.S_cold_surface_Tslope = OP.quadraticFit(self.depths[0], S_slope_cold_params)
+            self.Alk0_cold_surface = OP.quadraticFit(self.depths[0], Alk0_cold_params)
+            self.Alk_cold_surface_Tslope = OP.quadraticFit(self.depths[0], Alk_slope_cold_params)
+            self.bio_pump_cold = OP.quadraticFit(self.depths[0], Biopump_cold_params)
+            self.bio_pump_cold_Tslope = OP.quadraticFit(self.depths[0], Biopump_slope_cold_params)
+
+            self.T0_warm_surface = self.T0_warm_surface * self.warm_area_fraction + self.T0_cold_surface * self.cold_area_fraction
+            self.T_warm_surface_Tslope = self.T_warm_surface_Tslope * self.warm_area_fraction + self.T_cold_surface_Tslope * self.cold_area_fraction
+            self.S0_warm_surface = self.S0_warm_surface * self.warm_area_fraction + self.S0_cold_surface * self.cold_area_fraction
+            self.S_warm_surface_Tslope = self.S_warm_surface_Tslope * self.warm_area_fraction + self.S_cold_surface_Tslope * self.cold_area_fraction
+            self.Alk0_warm_surface = self.Alk0_warm_surface * self.warm_area_fraction + self.Alk0_cold_surface * self.cold_area_fraction
+            self.Alk_warm_surface_Tslope = self.Alk_warm_surface_Tslope * self.warm_area_fraction + self.Alk_cold_surface_Tslope * self.cold_area_fraction
+            self.bio_pump_warm = self.bio_pump_warm + self.bio_pump_cold            
+
+        else:
+            self.T0_cold_surface = OP.quadraticFit(self.depths[1], T0_cold_params)
+            self.T_cold_surface_Tslope = OP.quadraticFit(self.depths[1], T_slope_cold_params)
+            self.S0_cold_surface = OP.quadraticFit(self.depths[1], S0_cold_params)
+            self.S_cold_surface_Tslope = OP.quadraticFit(self.depths[1], S_slope_cold_params)
+            self.Alk0_cold_surface = OP.quadraticFit(self.depths[1], Alk0_cold_params)
+            self.Alk_cold_surface_Tslope = OP.quadraticFit(self.depths[1], Alk_slope_cold_params)
+            self.bio_pump_cold = OP.quadraticFit(self.depths[1], Biopump_cold_params)
+            self.bio_pump_cold_Tslope = OP.quadraticFit(self.depths[1], Biopump_slope_cold_params)
+
         return
 
 
@@ -368,7 +411,7 @@ class ForcedOceanCarbonModel:
 
         ##### Updating reservoirs due to ocean-flux
         self.C_oce[0,i] = self.C_oce[0,i] + self.dt * self.ocean_flux_warm[i]
-        self.C_oce[1,i] = self.C_oce[1,i] + self.dt * self.ocean_flux_cold[i]
+        if not self.ModelType == '2BoxOcean': self.C_oce[1,i] = self.C_oce[1,i] + self.dt * self.ocean_flux_cold[i]
 
         if not lspinup:
             self.C_atm[i+1] = self.C_atm[i+1] - self.dt * self.ocean_flux_total[i]
@@ -378,7 +421,9 @@ class ForcedOceanCarbonModel:
 
     def __advect_ocean_tracer(self, i, Ts, lspinup=False):
 
-        if self.ModelType == '3BoxOcean':
+        if self.ModelType == '2BoxOcean':
+            OP.advect_ocean_tracer_2Box(self, i, Ts)
+        elif self.ModelType == '3BoxOcean':
             OP.advect_ocean_tracer_3Box(self, i, Ts)
         elif self.ModelType == '4BoxOcean':
             if self.advection == 'Lenton':
@@ -394,7 +439,9 @@ class ForcedOceanCarbonModel:
 
     def __biological_carbon_pump(self, i, Ts):
 
-        if self.ModelType == '3BoxOcean':
+        if self.ModelType == '2BoxOcean':
+            OP.biological_carbon_pump_2Box(self, i, Ts)
+        elif self.ModelType == '3BoxOcean':
             OP.biological_carbon_pump_3Box(self, i, Ts)
         elif self.ModelType == '4BoxOcean':
             OP.biological_carbon_pump_4Box(self, i, Ts)

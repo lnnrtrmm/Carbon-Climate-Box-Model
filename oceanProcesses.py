@@ -94,6 +94,21 @@ def advect_ocean_tracer_3Box(CModel, i, Tglobal=0.0):
         
     return
 
+
+def advect_ocean_tracer_2Box(CModel, i, Tglobal=0.0):
+    # 2 boxes are in order: surface, deep ocean
+    k_sd = CModel.k_mix_SD
+
+    dts = CModel.dt * seconds_per_year
+
+    C_s = CModel.C_oce[0,i] / CModel.V_oce[0]
+    C_d = CModel.C_oce[1,i] / CModel.V_oce[1]
+    
+    CModel.C_oce[0,i+1] = CModel.C_oce[0,i] + dts * k_sd*(C_d - C_s)
+    CModel.C_oce[1,i+1] = CModel.C_oce[1,i] + dts * k_sd*(C_s - C_d)
+     
+    return
+
 ###################################################################################
 ####################### Biological C pump #########################################
 ###################################################################################
@@ -129,6 +144,17 @@ def biological_carbon_pump_3Box(CModel, i, Tglobal=0.0):
     CModel.C_oce[1,i] += - dt * BCP_c
     CModel.C_oce[2,i] += dt * (BCP_w + BCP_c)
 
+    return
+
+
+def biological_carbon_pump_2Box(CModel, i, Tglobal=0.0):
+    # 2 boxes are in order: surface, deep ocean
+
+    dt = CModel.dt
+    BCP_w = CModel.bio_pump_warm
+
+    CModel.C_oce[0,i] += - dt * BCP_w
+    CModel.C_oce[1,i] += dt * BCP_w
     return
 
 ###################################################################################
@@ -203,6 +229,13 @@ def calc_ocean_pCO2(TC, S, alk, dic, ph_old=8.1, dbg=0, iterative_limit=1e-10):
 
 
 def calc_surface_ocean_flux(CModel, i, Ts, fluxType):
+
+    warm_area = ocean_surface_area * CModel.warm_area_fraction
+    cold_area = ocean_surface_area * CModel.cold_area_fraction
+    if CModel.ModelType == '2BoxOcean':
+        warm_area = ocean_surface_area
+        cold_area = 0.0
+
     T_warm = CModel.T_warm_surface_Tslope * Ts + CModel.T0_warm_surface
     T_cold = CModel.T_cold_surface_Tslope * Ts + CModel.T0_cold_surface
 
@@ -228,17 +261,19 @@ def calc_surface_ocean_flux(CModel, i, Ts, fluxType):
 
     
     CModel.pH_oce_warm[i], CModel.pCO2_oce_warm[i] = calc_ocean_pCO2(T_warm, salt_w, talk_w, dic_w, CModel.pH_oce_warm[i-1])
-    CModel.pH_oce_cold[i], CModel.pCO2_oce_cold[i] = calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c, CModel.pH_oce_cold[i-1])
+    if not CModel.ModelType == '2BoxOcean':
+        CModel.pH_oce_cold[i], CModel.pCO2_oce_cold[i] = calc_ocean_pCO2(T_cold, salt_c, talk_c, dic_c, CModel.pH_oce_cold[i-1])
+    else:
+        CModel.pH_oce_cold[i] = CModel.pH_oce_warm[i]
+        CModel.pCO2_oce_cold[i] = CModel.pCO2_oce_warm[i]
 
     if CModel.dbg == 1:
         print(i, '....calulcated the ocean pH:', CModel.pH_oce_warm[i], CModel.pH_oce_cold[i])
 
     
     if fluxType == 'LOSCAR':
-        flux_warm = calcAirSeaCO2Flux_LOSCAR(CModel.k_gasex_warm, ocean_surface_area * CModel.warm_area_fraction,
-                                               CModel.pCO2_atm[i], CModel.pCO2_oce_warm[i])
-        flux_cold = calcAirSeaCO2Flux_LOSCAR(CModel.k_gasex_cold, ocean_surface_area * CModel.cold_area_fraction,
-                                               CModel.pCO2_atm[i], CModel.pCO2_oce_cold[i])
+        flux_warm = calcAirSeaCO2Flux_LOSCAR(CModel.k_gasex_warm, warm_area, CModel.pCO2_atm[i], CModel.pCO2_oce_warm[i])
+        flux_cold = calcAirSeaCO2Flux_LOSCAR(CModel.k_gasex_cold, cold_area, CModel.pCO2_atm[i], CModel.pCO2_oce_cold[i])
     else:
         sys.exit('No other flux type than LOSCAR implemented yet!')
 
